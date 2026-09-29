@@ -13,3 +13,12 @@ npm-debug.log*
 *.log
 /tmp/
 scratchpad/
+
+# Build / publish artifacts
+*.zip
+__MACOSX/
+
+# Signing keys — NEVER commit
+*.pem
+*.crx
+key.pem
