@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Interceptor - HTTP Proxy for Web Devs",
   "short_name": "Interceptor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Burp-style intercept (edit / forward / drop), HTTP history and repeater for testing your own web apps.",
   "permissions": [
     "debugger",

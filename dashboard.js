@@ -202,15 +202,40 @@ async function releaseTab(tabId) {
   try { await chrome.runtime.sendMessage({ type: 'releaseTab', tabId }); } catch { /* ignore */ }
 }
 
+/** Turn Chrome's terse debugger errors into something actionable. */
+function attachErrorMessage(msg, host) {
+  if (/already attached|Another debugger/i.test(msg)) {
+    return 'Another debugger is already on this tab. Close its DevTools (F12) or any other debugging extension, then try again.';
+  }
+  if (/different extension|chrome-extension|Cannot access|Cannot attach/i.test(msg)) {
+    return `Chrome won't let Interceptor attach to this tab: another extension has put its own page here — a redirect, or an injected iframe/overlay (common on payment pages). Disable other extensions for ${host || 'this site'}, or use a clean browser profile with only Interceptor, then Attach again.`;
+  }
+  return `Could not attach: ${msg}`;
+}
+
 async function attach() {
   const tabId = Number($('#tabSelect').value);
   if (!tabId) return toast('Pick a tab to attach to first.', 'error');
+  // Re-read the tab's CURRENT url — it may have navigated/redirected since the list was built.
+  let liveTab;
+  try { liveTab = await chrome.tabs.get(tabId); }
+  catch { await refreshTabs(); return toast('That tab is gone — I refreshed the list. Pick your site tab again.', 'error'); }
+  const liveUrl = liveTab.url || liveTab.pendingUrl || '';
+  let liveHost = '';
+  try { liveHost = new URL(liveUrl).host; } catch { /* ignore */ }
+  if (!/^https?:|^file:/i.test(liveUrl)) {
+    await refreshTabs();
+    return toast(
+      'That tab is not a normal web page right now (it may have been redirected by another extension to a chrome-extension/chrome page). Reload your site in the tab, then pick it again.',
+      'error',
+    );
+  }
   await claimTab(tabId); // hand the tab off from Auto mode so there's no debugger conflict
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
   } catch (e) {
     await releaseTab(tabId);
-    return toast(`Could not attach: ${e.message}`, 'error');
+    return toast(attachErrorMessage(e.message, liveHost), 'error');
   }
   state.tabId = tabId;
   state.attached = true;
