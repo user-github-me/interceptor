@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Interceptor</title>
+  <link rel="icon" href="icons/icon32.png">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="icons/icon32.png" alt=""> Interceptor</div>
+    <div class="target">
+      <label for="tabSelect">Target tab</label>
+      <select id="tabSelect"></select>
+      <button id="refreshTabs" title="Refresh tab list">&#x21bb;</button>
+      <button id="attachBtn" class="primary">Attach</button>
+      <button id="reloadTabBtn" disabled title="Reload the target tab (bypassing cache) to capture everything from the start">Reload tab</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="disableCache"> Disable cache</label>
+    <span id="status" class="pill off">Not attached</span>
+  </header>
+
+  <nav class="tabs">
+    <button data-view="intercept" class="active">Intercept <span id="queueBadge" class="badge hidden">0</span></button>
+    <button data-view="history">HTTP History <span id="historyCount" class="count">0</span></button>
+    <button data-view="repeater">Repeater</button>
+  </nav>
+
+  <main>
+    <!-- ============ INTERCEPT ============ -->
+    <section id="view-intercept" class="view active">
+      <div class="toolbar">
+        <button id="interceptToggle" class="toggle">Intercept is OFF</button>
+        <button id="fwdBtn" class="primary" disabled title="Ctrl/&#x2318;+Enter">Forward</button>
+        <button id="fwdRespBtn" disabled title="Forward this request and pause its response too">Forward + catch response</button>
+        <button id="dropBtn" class="danger" disabled>Drop</button>
+        <button id="fwdAllBtn" disabled>Forward all</button>
+        <button id="toRepeaterFromIntercept" disabled>Send to Repeater</button>
+        <span class="sep"></span>
+        <label class="chk"><input type="checkbox" id="optRequests" checked> Requests</label>
+        <label class="chk"><input type="checkbox" id="optResponses"> Responses</label>
+        <label class="chk"><input type="checkbox" id="optSkipStatic" checked> Skip static files</label>
+        <input id="optFilter" class="filter" placeholder="Only intercept URLs matching&hellip;  (text or /regex/)">
+      </div>
+      <div id="autoBar" class="auto-bar hidden">
+        <span class="auto-dot"></span>
+        <span id="autoBarText"></span>
+        <span class="sep"></span>
+        <span class="hint">Change the rule in the toolbar popup (extension icon)</span>
+      </div>
+      <div class="split intercept-split">
+        <aside class="queue">
+          <div class="pane-title">Queue <span id="queueCount" class="count">0</span></div>
+          <ul id="queueList"></ul>
+          <div id="queueEmpty" class="empty">
+            <p><b>How to intercept</b></p>
+            <ol>
+              <li>Pick your app's tab above and click <b>Attach</b>.</li>
+              <li>Turn <b>Intercept ON</b>.</li>
+              <li>Use your app &mdash; requests pause here so you can edit, forward or drop them.</li>
+            </ol>
+            <p class="hint">Tip: for <b>payment tests</b>, open the extension popup and turn on <b>Auto mode</b> to force a parameter (e.g. <code>amount</code>) to a fixed value on every request &mdash; no manual editing needed.</p>
+          </div>
+          <div class="pane-title auto-title">Auto log <span id="autoLogCount" class="count">0</span><button id="autoClearLog" class="mini" title="Clear auto log">clear</button></div>
+          <ul id="autoLogList" class="autolog"></ul>
+          <div id="autoLogEmpty" class="empty small">No auto-rewrites yet. Turn on Auto mode in the popup.</div>
+        </aside>
+        <div class="editor-pane">
+          <div class="pane-title"><span id="editorTitle">No intercepted item selected</span><span id="editorHint" class="hint"></span></div>
+          <div id="editorWarn" class="warn hidden"></div>
+          <textarea id="interceptEditor" spellcheck="false" disabled placeholder="Intercepted request / response appears here. Edit anything — method, path, headers, body — then Forward."></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY ============ -->
+    <section id="view-history" class="view">
+      <div class="toolbar">
+        <input id="historyFilter" class="filter wide" placeholder="Filter by URL, method or status&hellip;">
+        <select id="historyType">
+          <option value="">All types</option>
+          <option value="api">Fetch / XHR</option>
+          <option value="Document">Document</option>
+          <option value="Script">Script</option>
+          <option value="Stylesheet">CSS</option>
+          <option value="Image">Image</option>
+          <option value="Font">Font</option>
+          <option value="Other">Other</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="historyHideStatic"> Hide static</label>
+        <label class="chk"><input type="checkbox" id="historyAutoScroll" checked> Auto-scroll</label>
+        <span class="sep"></span>
+        <button id="exportHar">Export HAR</button>
+        <button id="clearHistory" class="danger">Clear</button>
+      </div>
+      <div class="history-layout">
+        <div class="table-wrap" id="historyWrap">
+          <table id="historyTable">
+            <thead><tr><th>#</th><th>Method</th><th>Host</th><th>Path</th><th>Status</th><th>Type</th><th>Size</th><th>Time</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div id="historyEmpty" class="empty center">Attach to a tab to start recording traffic.</div>
+        </div>
+        <div class="detail">
+          <div class="toolbar small">
+            <button id="histToRepeater" disabled>Send to Repeater</button>
+            <button id="histCurl" disabled>Copy as cURL</button>
+            <button id="histCopyReq" disabled>Copy request</button>
+            <button id="histCopyResp" disabled>Copy response</button>
+            <label class="chk"><input type="checkbox" id="prettyJson" checked> Pretty JSON</label>
+          </div>
+          <div class="split2">
+            <div class="pane"><div class="pane-title">Request</div><pre id="histReq" class="raw"></pre></div>
+            <div class="pane"><div class="pane-title">Response</div><pre id="histRes" class="raw"></pre></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ REPEATER ============ -->
+    <section id="view-repeater" class="view">
+      <div class="rep-tabs"><div id="repTabList"></div><button id="repNew" title="New repeater tab">+</button></div>
+      <div class="toolbar">
+        <button id="repSend" class="primary" title="Ctrl/&#x2318;+Enter">Send</button>
+        <button id="repCancel" disabled>Cancel</button>
+        <label for="repTarget">Target</label>
+        <input id="repTarget" class="filter" placeholder="https://localhost:3000">
+        <label class="chk"><input type="checkbox" id="repFollow"> Follow redirects</label>
+        <label class="chk"><input type="checkbox" id="repPretty" checked> Pretty JSON</label>
+        <span id="repMeta" class="meta"></span>
+      </div>
+      <div class="split2 grow">
+        <div class="pane">
+          <div class="pane-title">Request <span class="hint">edit freely &middot; Ctrl/&#x2318;+Enter to send</span></div>
+          <textarea id="repEditor" spellcheck="false"></textarea>
+        </div>
+        <div class="pane">
+          <div class="pane-title">
+            <span class="seg">
+              <button id="repViewRes" class="active">Response</button>
+              <button id="repViewSent">Actual request sent</button>
+            </span>
+          </div>
+          <pre id="repResponse" class="raw"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="http.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Node (only used for local unit tests; there are no runtime deps)
+node_modules/
+npm-debug.log*
+
+# Local test artifacts / scratch
+*.log
+/tmp/
+scratchpad/

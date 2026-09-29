@@ -1,0 +1,56 @@
+:root {
+  --bg: #1e2128; --panel: #252932; --border: #323743; --text: #e3e6ec;
+  --muted: #8b93a3; --accent: #ff7a1a; --green: #3fbf7f;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #fff; --panel: #f4f5f7; --border: #d8dbe2; --text: #1d2129; --muted: #69707d; }
+}
+* { box-sizing: border-box; }
+body {
+  width: 320px; margin: 0; padding: 14px; background: var(--bg); color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.head img { width: 20px; height: 20px; }
+.head b { font-size: 15px; }
+.pill { margin-left: auto; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; }
+.pill.off { background: var(--panel); color: var(--muted); }
+.pill.on { background: #3fbf7f22; color: var(--green); }
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.scope-head b { font-size: 14px; }
+.scope-head small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+.seg { display: flex; gap: 0; margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { flex: 1; background: var(--bg); border: none; border-left: 1px solid var(--border); color: var(--text); padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.seg button:first-child { border-left: none; }
+.seg button:hover:not(:disabled) { background: var(--panel); }
+.seg button.active { background: var(--accent); color: #fff; }
+.seg button:disabled { opacity: .4; cursor: default; }
+.scope-info { margin: 8px 0 0; font-size: 11px; color: var(--muted); min-height: 14px; }
+.scope-info.on { color: var(--accent); }
+
+.rules { margin-top: 12px; transition: .18s; }
+.rules.disabled { opacity: .4; pointer-events: none; }
+.rule { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.field { flex: none; }
+.field.grow { flex: 1; min-width: 0; }
+.field label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 3px; }
+.field input, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: var(--text); font-family: var(--mono); font-size: 12px; }
+.field textarea { resize: vertical; line-height: 1.4; }
+.field input { width: 62px; }
+.field input:focus, .field textarea:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.valcol { display: flex; align-items: flex-end; gap: 4px; }
+.rx { background: var(--bg); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; width: 26px; height: 30px; cursor: pointer; font-size: 15px; line-height: 1; }
+.rx:hover { border-color: var(--accent); color: var(--accent); }
+.rule-actions { display: flex; gap: 6px; }
+.mini { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 9px; font-size: 11px; cursor: pointer; }
+.mini:hover:not(:disabled) { border-color: var(--accent); }
+.mini.ghost { color: var(--muted); }
+.mini:disabled { opacity: .4; cursor: default; }
+.note { margin: 8px 0 0; font-family: var(--mono); font-size: 11px; color: var(--accent); min-height: 15px; }
+
+.hint { color: var(--muted); font-size: 11px; margin: 12px 2px; }
+button.primary { width: 100%; background: var(--accent); border: none; color: #fff; font-weight: 600; font-size: 13px; padding: 9px; border-radius: 8px; cursor: pointer; }
+button.primary:hover { filter: brightness(1.08); }
+.foot { color: var(--muted); font-size: 11px; text-align: center; margin: 8px 0 0; min-height: 14px; }

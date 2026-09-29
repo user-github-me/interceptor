@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="head">
+    <img src="icons/icon32.png" alt=""> <b>Interceptor</b>
+    <span id="attach" class="pill off">not attached</span>
+  </div>
+
+  <div class="card">
+    <div class="scope-head">
+      <b>Auto mode</b>
+      <small>Force payment fields to a fixed value automatically &mdash; no manual attach</small>
+    </div>
+    <div class="seg" id="scopeSeg" role="tablist">
+      <button data-scope="off" class="active">Off</button>
+      <button data-scope="tab">This tab</button>
+      <button data-scope="all">All tabs</button>
+    </div>
+    <p id="scopeInfo" class="scope-info"></p>
+
+    <div id="rules" class="rules"></div>
+    <div class="rule-actions">
+      <button id="addRule" class="mini">+ Add rule</button>
+      <button id="resetRules" class="mini ghost" title="Restore the full recommended list of payment field names">Reset to defaults</button>
+    </div>
+    <p class="note" id="ruleNote"></p>
+  </div>
+
+  <p class="hint">Put several field names in one rule, separated by commas &mdash; they all get the same value. Matches query strings, form bodies, JSON (including nested) and multipart fields, case-insensitively. Every change is logged in the panel's <b>Auto&nbsp;log</b>.</p>
+
+  <button id="openPanel" class="primary">Open panel &rarr;</button>
+  <p class="foot" id="foot"></p>
+
+  <script src="http.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
