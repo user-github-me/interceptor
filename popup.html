@@ -2,20 +2,21 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <title>Interceptor — Auto mode</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="head">
-    <img src="icons/icon32.png" alt=""> <b>Interceptor</b>
+    <img src="icons/icon32.png" alt=""> <div><b>Interceptor</b><small class="brand-caption">Your HTTP workbench</small></div>
     <span id="attach" class="pill off">not attached</span>
   </div>
 
   <div class="card">
     <div class="scope-head">
       <b>Auto mode</b>
-      <small>Force payment fields to a fixed value automatically &mdash; no manual attach</small>
+      <small>Set your rules once. Test every matching request.</small>
     </div>
-    <div class="seg" id="scopeSeg" role="tablist">
+    <div class="seg" id="scopeSeg" role="group" aria-label="Auto mode scope">
       <button data-scope="off" class="active">Off</button>
       <button data-scope="tab">This tab</button>
       <button data-scope="all">All tabs</button>
@@ -28,12 +29,24 @@
       <button id="resetRules" class="mini ghost" title="Restore the full recommended list of payment field names">Reset to defaults</button>
     </div>
     <p class="note" id="ruleNote"></p>
+
+    <details class="scope-guard" open>
+      <summary>URL safety scope</summary>
+      <label for="autoInclude">Only rewrite matching URLs <span>(blank = all)</span></label>
+      <textarea id="autoInclude" rows="2" spellcheck="false" placeholder="https://localhost:*/*&#10;*.staging.example.com/api/*"></textarea>
+      <label for="autoExclude">Never rewrite matching URLs</label>
+      <textarea id="autoExclude" rows="2" spellcheck="false" placeholder="logout&#10;analytics"></textarea>
+      <p class="scope-help">One pattern per line: text, <code>*</code> wildcards, or <code>/regex/i</code>. Exclusions always win.</p>
+      <p id="scopeError" class="scope-error" role="status"></p>
+    </details>
   </div>
 
-  <p class="hint">Put several field names in one rule, separated by commas &mdash; they all get the same value. Matches query strings, form bodies, JSON (including nested) and multipart fields, case-insensitively. Every change is logged in the panel's <b>Auto&nbsp;log</b>.</p>
+  <p class="hint">Field names match query strings, forms, nested JSON and multipart data, case-insensitively. Configure rules and URL scope first, then turn Auto mode on. Every change appears in the panel's <b>Auto&nbsp;log</b>.</p>
 
-  <button id="openPanel" class="primary">Open panel &rarr;</button>
-  <p class="foot" id="foot"></p>
+  <footer class="popup-footer">
+    <button id="openPanel" class="primary">Open workbench <span aria-hidden="true">&rarr;</span></button>
+    <p class="foot" id="foot"></p>
+  </footer>
 
   <script src="http.js"></script>
   <script src="popup.js"></script>

@@ -1,14 +1,15 @@
 # Privacy Policy — Interceptor
 
-_Last updated: 2026-09-29_
+_Last updated: 2026-10-03_
 
 Interceptor is a browser extension for inspecting and modifying the HTTP traffic
 of web pages you are testing. This policy explains what it does with data.
 
 ## Short version
 
-**Interceptor does not collect, store remotely, sell, or transmit any of your
-data. Everything happens locally in your browser.**
+**Interceptor does not collect, store remotely, sell, or send your data to the
+developer. Traffic analysis happens locally in your browser.** Repeater and Runner
+send requests to the target you choose when you click Send or Start run.
 
 ## What the extension accesses
 
@@ -26,21 +27,34 @@ The extension stores the following **locally** using the browser's
 `chrome.storage.local` API, on your own computer:
 
 - your settings and Auto-mode rules,
-- your Repeater tabs (the raw requests you save).
+- your Repeater tabs only when you enable **Remember tabs locally** (off by default).
+- Collections, request notes, and workspace variables only when you enable
+  **Remember workspace locally** (off by default).
 
-Captured HTTP history exists only in memory while the panel is open and is
-discarded when you close it or clear it. Nothing is written to any remote server.
+Existing saved Repeater tabs are preserved when upgrading from earlier versions.
+You can disable **Remember tabs locally** to remove those saved drafts.
+
+Captured or imported HTTP history, response snapshots, Inspector data, Runner
+results, Comparer inputs, decoded values, and Auto logs
+exist only in memory while the panel is open and are discarded when you close it
+or clear them. Nothing is written to any remote server.
+
+Exporting a collection, HAR, or Runner CSV creates a file at your request.
+Collection exports omit workspace variables, but raw requests can still contain
+cookies or tokens. Imported cURL commands are parsed as text and never executed.
 
 ## What is NOT done
 
-- No data is sent to the developer or to any third party.
+- No data is sent to the developer, advertisers, or analytics services.
 - No analytics, tracking, or telemetry of any kind.
 - No accounts, and no remote code is loaded or executed.
 
 ## Your control
 
 You choose which tab(s) the extension attaches to. Detaching, turning Auto mode
-off, or removing the extension stops all processing. Locally stored settings are
+off, and stopping Runner end those operations. Disable either persistence option
+to clear its saved data; current workspace data remains in memory until closed.
+Locally stored settings are
 removed when you uninstall the extension.
 
 ## Contact

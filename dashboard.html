@@ -6,10 +6,11 @@
   <title>Interceptor</title>
   <link rel="icon" href="icons/icon32.png">
   <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="workflow.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><img src="icons/icon32.png" alt=""> Interceptor</div>
+    <div class="brand"><img src="icons/icon32.png" alt=""><div>Interceptor<span class="brand-caption">Your HTTP workbench</span></div></div>
     <div class="target">
       <label for="tabSelect">Target tab</label>
       <select id="tabSelect"></select>
@@ -21,15 +22,23 @@
     <span id="status" class="pill off">Not attached</span>
   </header>
 
-  <nav class="tabs">
-    <button data-view="intercept" class="active">Intercept <span id="queueBadge" class="badge hidden">0</span></button>
-    <button data-view="history">HTTP History <span id="historyCount" class="count">0</span></button>
-    <button data-view="repeater">Repeater</button>
+  <nav class="tabs" aria-label="Workbench tools">
+    <button data-view="intercept" aria-controls="view-intercept" aria-current="page" class="active"><span class="nav-icon" aria-hidden="true">⇄</span>Intercept <span id="queueBadge" class="badge hidden">0</span></button>
+    <button data-view="history" aria-controls="view-history"><span class="nav-icon" aria-hidden="true">≡</span>HTTP History <span id="historyCount" class="count">0</span></button>
+    <button data-view="repeater" aria-controls="view-repeater"><span class="nav-icon" aria-hidden="true">↻</span>Repeater</button>
+    <button data-view="comparer" aria-controls="view-comparer"><span class="nav-icon" aria-hidden="true">◫</span>Comparer <span id="compareBadge" class="count"></span></button>
+    <button data-view="decoder" aria-controls="view-decoder"><span class="nav-icon" aria-hidden="true">⌘</span>Decoder</button>
+    <button data-view="sitemap" aria-controls="view-sitemap"><span class="nav-icon" aria-hidden="true">⌗</span>Site Map <span id="siteMapCount" class="count">0</span></button>
+    <button data-view="inspector" aria-controls="view-inspector"><span class="nav-icon" aria-hidden="true">⊙</span>Inspector</button>
+    <button data-view="runner" aria-controls="view-runner"><span class="nav-icon" aria-hidden="true">▷</span>Runner</button>
+    <button data-view="collections" aria-controls="view-collections"><span class="nav-icon" aria-hidden="true">▤</span>Collections</button>
+    <span class="local-label"><span></span> Local workspace</span>
   </nav>
 
   <main>
     <!-- ============ INTERCEPT ============ -->
     <section id="view-intercept" class="view active">
+      <div class="view-heading"><div><h1>Intercept</h1><p>Pause traffic. Make your edit. Keep the flow moving.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>forward</b></span></div>
       <div class="toolbar">
         <button id="interceptToggle" class="toggle">Intercept is OFF</button>
         <button id="fwdBtn" class="primary" disabled title="Ctrl/&#x2318;+Enter">Forward</button>
@@ -54,13 +63,13 @@
           <div class="pane-title">Queue <span id="queueCount" class="count">0</span></div>
           <ul id="queueList"></ul>
           <div id="queueEmpty" class="empty">
-            <p><b>How to intercept</b></p>
+            <p><b>Catch your next request</b></p>
             <ol>
               <li>Pick your app's tab above and click <b>Attach</b>.</li>
               <li>Turn <b>Intercept ON</b>.</li>
               <li>Use your app &mdash; requests pause here so you can edit, forward or drop them.</li>
             </ol>
-            <p class="hint">Tip: for <b>payment tests</b>, open the extension popup and turn on <b>Auto mode</b> to force a parameter (e.g. <code>amount</code>) to a fixed value on every request &mdash; no manual editing needed.</p>
+            <p class="hint">Testing the same field repeatedly? Set an Auto rule in the toolbar popup and let it handle the edits.</p>
           </div>
           <div class="pane-title auto-title">Auto log <span id="autoLogCount" class="count">0</span><button id="autoClearLog" class="mini" title="Clear auto log">clear</button></div>
           <ul id="autoLogList" class="autolog"></ul>
@@ -76,8 +85,19 @@
 
     <!-- ============ HISTORY ============ -->
     <section id="view-history" class="view">
+      <div class="view-heading"><div><h1>HTTP History</h1><p>Find the request that matters. Inspect it, replay it, or compare it.</p></div><span class="key-hint">Live traffic + imported HAR</span></div>
       <div class="toolbar">
-        <input id="historyFilter" class="filter wide" placeholder="Filter by URL, method or status&hellip;">
+        <input id="historyFilter" class="filter wide" placeholder="Filter URL, headers or bodies&hellip;">
+        <select id="historyMethod" aria-label="Filter by request method">
+          <option value="">All methods</option>
+          <option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option>
+          <option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
+        </select>
+        <select id="historyStatus" aria-label="Filter by response status">
+          <option value="">All statuses</option>
+          <option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option>
+          <option value="pending">Pending / failed</option>
+        </select>
         <select id="historyType">
           <option value="">All types</option>
           <option value="api">Fetch / XHR</option>
@@ -89,9 +109,12 @@
           <option value="Other">Other</option>
         </select>
         <label class="chk"><input type="checkbox" id="historyHideStatic"> Hide static</label>
+        <label class="chk"><input type="checkbox" id="historySearchContent" checked> Search content</label>
         <label class="chk"><input type="checkbox" id="historyAutoScroll" checked> Auto-scroll</label>
         <span class="sep"></span>
-        <button id="exportHar">Export HAR</button>
+        <button id="importHar">Import HAR</button>
+        <input id="importHarFile" class="hidden" type="file" accept=".har,application/json">
+        <button id="exportHar" title="Exports rows matching the current filters">Export visible HAR</button>
         <button id="clearHistory" class="danger">Clear</button>
       </div>
       <div class="history-layout">
@@ -108,6 +131,9 @@
             <button id="histCurl" disabled>Copy as cURL</button>
             <button id="histCopyReq" disabled>Copy request</button>
             <button id="histCopyResp" disabled>Copy response</button>
+            <button id="histCompare" disabled>Compare response</button>
+            <button id="histInspect" disabled>Inspect fields</button>
+            <button id="histSave" disabled>Save request</button>
             <label class="chk"><input type="checkbox" id="prettyJson" checked> Pretty JSON</label>
           </div>
           <div class="split2">
@@ -120,14 +146,23 @@
 
     <!-- ============ REPEATER ============ -->
     <section id="view-repeater" class="view">
+      <div class="view-heading"><div><h1>Repeater</h1><p>Tweak a request and see how your server responds.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>send</b></span></div>
       <div class="rep-tabs"><div id="repTabList"></div><button id="repNew" title="New repeater tab">+</button></div>
       <div class="toolbar">
         <button id="repSend" class="primary" title="Ctrl/&#x2318;+Enter">Send</button>
         <button id="repCancel" disabled>Cancel</button>
+        <button id="repImportCurl">Import cURL</button>
+        <button id="repDuplicate">Duplicate</button>
+        <button id="repSave">Save</button>
+        <button id="repInspect">Inspect</button>
+        <button id="repToRunner">Send to Runner</button>
+        <button id="repCompare" disabled>Compare response</button>
         <label for="repTarget">Target</label>
         <input id="repTarget" class="filter" placeholder="https://localhost:3000">
+        <label for="repTimeout">Timeout</label><input id="repTimeout" type="number" min="1" max="300" value="30" class="number-input" aria-label="Request timeout in seconds"><span class="hint">s</span>
         <label class="chk"><input type="checkbox" id="repFollow"> Follow redirects</label>
         <label class="chk"><input type="checkbox" id="repPretty" checked> Pretty JSON</label>
+        <label class="chk" title="Off by default because raw requests may contain cookies or tokens"><input type="checkbox" id="repRemember"> Remember tabs locally</label>
         <span id="repMeta" class="meta"></span>
       </div>
       <div class="split2 grow">
@@ -141,15 +176,141 @@
               <button id="repViewRes" class="active">Response</button>
               <button id="repViewSent">Actual request sent</button>
             </span>
+            <select id="repSnapshot" aria-label="Response snapshot"><option value="">Latest response</option></select>
+            <button id="repComparePrevious" class="mini" disabled>Compare previous</button>
           </div>
           <pre id="repResponse" class="raw"></pre>
         </div>
       </div>
     </section>
+
+    <!-- ============ COMPARER ============ -->
+    <section id="view-comparer" class="view">
+      <div class="view-heading"><div><h1>Comparer</h1><p>See what changed between two requests, responses, or documents.</p></div><span class="key-hint">A → B</span></div>
+      <div class="toolbar">
+        <button id="compareRun" class="primary">Compare</button>
+        <button id="compareSwap">Swap A / B</button>
+        <button id="compareClear" class="danger">Clear</button>
+        <button id="compareCopy">Copy unified diff</button>
+        <label class="chk"><input type="checkbox" id="comparePretty" checked> Normalize JSON bodies</label>
+        <span id="compareMeta" class="meta">Add two responses from HTTP History, or paste any text.</span>
+      </div>
+      <div class="compare-inputs">
+        <div class="pane">
+          <div class="pane-title"><span>Side A</span><span id="compareLabelA" class="hint">paste or send a history response</span></div>
+          <textarea id="compareA" spellcheck="false" placeholder="Paste the first request, response, JSON document, or text&hellip;"></textarea>
+        </div>
+        <div class="pane">
+          <div class="pane-title"><span>Side B</span><span id="compareLabelB" class="hint">paste or send a history response</span></div>
+          <textarea id="compareB" spellcheck="false" placeholder="Paste the second value&hellip;"></textarea>
+        </div>
+      </div>
+      <div class="compare-result">
+        <div class="pane-title">Line diff <span class="hint">removed / changed / added</span></div>
+        <div id="compareEmpty" class="empty center">Add content to both sides to see their differences.</div>
+        <table id="compareTable" class="diff-table"><tbody></tbody></table>
+      </div>
+    </section>
+
+    <!-- ============ DECODER ============ -->
+    <section id="view-decoder" class="view">
+      <div class="view-heading"><div><h1>Decoder</h1><p>Turn encoded values into something you can read.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>transform</b></span></div>
+      <div class="toolbar">
+        <select id="decoderAction" aria-label="Transformation">
+          <option value="json-pretty">Pretty-print JSON</option>
+          <option value="json-minify">Minify JSON</option>
+          <option value="url-decode">URL decode</option>
+          <option value="url-encode">URL encode</option>
+          <option value="base64-decode">Base64 / base64url decode</option>
+          <option value="base64-encode">Base64 encode (UTF-8)</option>
+          <option value="html-decode">HTML entity decode</option>
+          <option value="html-encode">HTML entity encode</option>
+          <option value="jwt-inspect">Inspect JWT (no verification)</option>
+          <option value="hex-decode">Hex decode (UTF-8)</option>
+          <option value="hex-encode">Hex encode (UTF-8)</option>
+          <option value="sha256">SHA-256 hash</option>
+          <option value="sha512">SHA-512 hash</option>
+        </select>
+        <button id="decoderRun" class="primary">Transform</button>
+        <button id="decoderSwap">Use output as input</button>
+        <button id="decoderClear" class="danger">Clear</button>
+        <button id="decoderCopy">Copy output</button>
+        <span id="decoderMeta" class="meta">Everything runs locally.</span>
+      </div>
+      <div class="split2 grow">
+        <div class="pane"><div class="pane-title">Input</div><textarea id="decoderInput" spellcheck="false" placeholder="Paste JSON, an encoded value, or a JWT&hellip;"></textarea></div>
+        <div class="pane"><div class="pane-title">Output</div><textarea id="decoderOutput" spellcheck="false" readonly placeholder="Transformed output appears here."></textarea></div>
+      </div>
+    </section>
+    <section id="view-sitemap" class="view">
+      <div class="view-heading"><div><h1>Site Map</h1><p>A map of the endpoints your app actually uses.</p></div><span class="key-hint">Built from HTTP History</span></div>
+      <div class="toolbar">
+        <input id="siteMapFilter" class="filter wide" placeholder="Search origin, method, path, or query field…" aria-label="Search captured endpoints">
+        <label class="chk"><input id="siteMapHideStatic" type="checkbox" checked> Hide static files</label>
+        <button id="siteMapRefresh">Refresh</button><button id="siteMapExport">Export endpoint list</button>
+        <span id="siteMapMeta" class="meta"></span>
+      </div>
+      <div class="table-wrap grow"><table id="siteMapTable"><thead><tr><th>Method</th><th>Origin</th><th>Path</th><th>Calls</th><th>Statuses</th><th>Avg. time</th><th>Query fields</th><th></th></tr></thead><tbody></tbody></table>
+        <div id="siteMapEmpty" class="empty center">Attach to your app or import a HAR file to discover endpoints. No requests are sent by Site Map.</div>
+      </div>
+    </section>
+
+    <section id="view-inspector" class="view">
+      <div class="view-heading"><div><h1>Inspector</h1><p>Read query fields, JSON values, headers, and cookie attributes at a glance.</p></div><span class="key-hint">Captured data only</span></div>
+      <div class="toolbar"><button id="inspectRun" class="primary">Inspect</button><button id="inspectToRepeater">Send to Repeater</button>
+        <label for="inspectTarget">Target</label><input id="inspectTarget" class="filter" value="http://localhost:3000" aria-label="Inspector request target">
+        <input id="inspectFilter" class="filter" placeholder="Filter fields…" aria-label="Filter inspected fields"><button id="inspectCopy">Copy fields as JSON</button><span id="inspectMeta" class="meta"></span>
+      </div>
+      <div class="workflow-split grow">
+        <div class="pane inspector-input"><div class="pane-title">Request <span id="inspectLabel" class="hint">paste a raw request or send from History</span></div><textarea id="inspectRequest" spellcheck="false" aria-label="Raw request to inspect" placeholder="GET /api/orders?status=pending HTTP/1.1&#10;Host: localhost:3000&#10;&#10;"></textarea>
+          <div class="pane-title">Response <span class="hint">optional: cookie attributes and header observations</span></div><textarea id="inspectResponse" spellcheck="false" aria-label="Raw response to inspect" placeholder="Paste a response to inspect its headers and Set-Cookie attributes."></textarea></div>
+        <div class="pane inspector-results"><div class="pane-title">Request fields</div><div class="inspector-scroll"><table id="inspectTable"><thead><tr><th>Location</th><th>Name</th><th>Value</th><th></th></tr></thead><tbody></tbody></table><div id="inspectEmpty" class="empty">Send a captured request here, or paste one on the left.</div>
+          <div class="pane-title">Response cookies</div><div id="inspectCookies" class="empty small">No response cookies.</div>
+          <div class="pane-title">Response headers</div><pre id="inspectResponseHeaders" class="raw compact-raw"></pre>
+          <div class="pane-title">Observations</div><div id="inspectNotes" class="empty small">Inspect a response to see header observations. These are context, not vulnerability findings.</div>
+        </div></div>
+      </div>
+    </section>
+
+    <section id="view-runner" class="view">
+      <div class="view-heading"><div><h1>Runner</h1><p>Try a controlled set of values and compare the responses.</p></div><span class="key-hint">One request at a time · up to 50 payloads</span></div>
+      <div class="toolbar"><button id="runnerStart" class="primary">Start run</button><button id="runnerStop" disabled>Stop</button><button id="runnerExport">Export results CSV</button><button id="runnerClear">Clear results</button>
+        <label for="runnerTarget">Target</label><input id="runnerTarget" class="filter" value="http://localhost:3000">
+        <label for="runnerDelay">Delay</label><input id="runnerDelay" type="number" class="number-input" min="100" max="10000" value="250"><span class="hint">ms</span>
+        <label for="runnerTimeout">Timeout</label><input id="runnerTimeout" type="number" class="number-input" min="1" max="120" value="15"><span class="hint">s</span>
+        <span id="runnerMeta" class="meta">Ready</span>
+      </div>
+      <div class="runner-plan">
+        <div class="pane"><div class="pane-title">Request template <span class="hint">replace one value with {{payload}}</span></div><textarea id="runnerRequest" spellcheck="false" aria-label="Runner request template" placeholder="POST /api/validate HTTP/1.1&#10;Host: {{host}}&#10;Content-Type: application/json&#10;&#10;{&quot;amount&quot;: {{payload}}}"></textarea></div>
+        <div class="pane payload-pane"><div class="pane-title">Payloads <span class="hint">one per line; inserted exactly as typed</span></div><textarea id="runnerPayloads" spellcheck="false" aria-label="Payload list" placeholder="0&#10;1&#10;-1&#10;null"></textarea><div class="runner-check"><label for="runnerMatch">Expected response text</label><input id="runnerMatch" placeholder="Optional literal text for each response"><span class="hint">Use quotes in payloads when a JSON value should be a string.</span></div></div>
+      </div>
+      <div class="runner-progress"><progress id="runnerProgress" value="0" max="1" aria-label="Run progress"></progress><span id="runnerProgressText">No run yet</span></div>
+      <div class="workflow-split runner-results grow"><div class="table-wrap"><table id="runnerTable"><thead><tr><th>#</th><th>Payload</th><th>Status</th><th>Time</th><th>Bytes</th><th>Check</th><th></th></tr></thead><tbody></tbody></table><div id="runnerEmpty" class="empty">Send a request from Repeater, replace a value with <code>{{payload}}</code>, and add the values to try. Starting a run sends every listed request to your chosen target.</div></div><div class="pane"><div class="pane-title">Selected result <button id="runnerCompare" class="mini" disabled>Compare with first</button><button id="runnerToRepeater" class="mini" disabled>Open in Repeater</button></div><pre id="runnerResponse" class="raw"></pre></div></div>
+    </section>
+
+    <section id="view-collections" class="view">
+      <div class="view-heading"><div><h1>Collections</h1><p>Keep useful requests together and switch targets with reusable variables.</p></div><span class="key-hint">{{variable}} in requests and targets</span></div>
+      <div class="toolbar"><button id="collectionNew">New request</button><button id="collectionImport">Import collection</button><input id="collectionImportFile" type="file" class="hidden" accept=".json,application/json"><button id="collectionExport">Export collection</button>
+        <input id="collectionFilter" class="filter" placeholder="Find a saved request…" aria-label="Search collection requests"><label class="chk" title="Saved requests and variables may contain cookies or tokens"><input id="workspaceRemember" type="checkbox"> Remember workspace locally</label><span id="collectionMeta" class="meta">In memory</span></div>
+      <div class="workflow-split grow"><aside class="collection-sidebar"><div class="pane-title">Requests <span id="collectionCount" class="count">0</span></div><div id="collectionList" class="collection-list"></div><div id="collectionEmpty" class="empty">Save a request from History or Repeater to build a collection.</div>
+          <div class="pane-title">Variables</div><textarea id="workspaceVariables" spellcheck="false" aria-label="Workspace variables" placeholder="baseUrl=https://localhost:3000&#10;host=localhost:3000&#10;token=your-test-token"></textarea><p class="empty small">Use <code>{{baseUrl}}</code>, <code>{{host}}</code>, or your own names. Values are inserted literally. Missing variables block sending.</p></aside>
+        <div class="pane collection-editor"><div class="toolbar small"><label for="collectionName">Name</label><input id="collectionName" placeholder="Request name"><label for="collectionFolder">Folder</label><input id="collectionFolder" placeholder="General"><button id="collectionOpen" class="primary" disabled>Open in Repeater</button><button id="collectionDelete" class="danger" disabled>Delete</button></div>
+          <div class="toolbar small"><label for="collectionTarget">Target</label><input id="collectionTarget" class="filter wide" placeholder="{{baseUrl}}"><label class="chk"><input id="collectionFollow" type="checkbox"> Follow redirects</label></div>
+          <div class="pane-title">Saved request <span class="hint">edits are kept automatically</span></div><textarea id="collectionRaw" spellcheck="false" disabled aria-label="Saved raw request" placeholder="Choose a saved request to edit it."></textarea>
+          <div class="pane-title">Notes</div><textarea id="collectionNotes" class="collection-notes" spellcheck="false" disabled aria-label="Saved request notes" placeholder="Expected behavior, test context, or reproduction steps…"></textarea>
+        </div>
+      </div>
+    </section>
   </main>
 
-  <div id="toast" class="toast"></div>
+  <dialog id="curlDialog" class="workbench-dialog"><form method="dialog"><div class="dialog-title"><h2>Import cURL</h2><button aria-label="Close cURL import">×</button></div></form><p>Paste a single command copied from DevTools. It is parsed locally; importing does not send it.</p><textarea id="curlInput" spellcheck="false" aria-label="cURL command" placeholder="curl 'https://localhost:3000/api/orders' -H 'Accept: application/json'"></textarea><p id="curlError" class="error-text" role="status"></p><button id="curlImportRun" class="primary">Import into Repeater</button></dialog>
+  <dialog id="toolDialog" class="workbench-dialog tool-dialog"><form method="dialog"><div class="dialog-title"><h2>Go to a tool</h2><button aria-label="Close tool switcher">×</button></div></form><input id="toolSearch" placeholder="Search tools…" aria-label="Search workbench tools"><div id="toolList"></div><p class="hint">⌘ / Ctrl + K to open · Esc to close</p></dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="http.js"></script>
+  <script src="workbench.js"></script>
+  <script src="workflow.js"></script>
   <script src="dashboard.js"></script>
+  <script src="workflow-ui.js"></script>
 </body>
 </html>
