@@ -1,5 +1,5 @@
 'use strict';
-/* global HTTP, Workbench, Workflow, workflowState, bindWorkflow, renderSiteMap, renderCollections, renderInspector, renderRunner, workspaceVariableText */
+/* global HTTP, Workbench, Workflow, Lab, workflowState, bindWorkflow, renderSiteMap, renderCollections, renderInspector, renderRunner, workspaceVariableText, labState, bindLab, queueLocalSave, renderAssertionResults, renderSecurity, renderWorkspace, renderWebSockets, captureWebSocket */
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -28,7 +28,7 @@ const state = {
   settings: {
     requests: true, responses: false, skipStatic: true, filter: '',
     disableCache: false, historyHideStatic: false, historySearchContent: true,
-    prettyJson: true, repPretty: true, repRemember: false, comparePretty: true,
+    prettyJson: true, repPretty: true, repRemember: true, comparePretty: true,
     autoMode: false, autoRules: [{ param: HTTP.DEFAULT_PARAMS, value: '1' }],
     autoInclude: '', autoExclude: '',
   },
@@ -205,6 +205,7 @@ async function loadSettings() {
   } catch { /* defaults */ }
 }
 function saveSettings() {
+  queueLocalSave();
   const settings = { ...state.settings };
   delete settings.autoTabId;
   chrome.storage.local.set({ settings }).catch(() => {});
@@ -394,6 +395,10 @@ async function applyFetchNow() {
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.attached || source.tabId !== state.tabId || source.sessionId) return;
   switch (method) {
+    case 'Network.webSocketCreated':
+    case 'Network.webSocketClosed':
+    case 'Network.webSocketFrameSent':
+    case 'Network.webSocketFrameReceived': captureWebSocket(method, params); break;
     case 'Fetch.requestPaused': onRequestPaused(params); break;
     case 'Network.requestWillBeSent': onRequestWillBeSent(params); break;
     case 'Network.requestWillBeSentExtraInfo': onRequestExtra(params); break;
@@ -582,6 +587,7 @@ async function autoForward(p, req, reqBody, mod) {
 
 /** Log an auto-rewrite and mark the matching history row edited. */
 function recordAuto(p, req, mod, bodyChanged) {
+  queueLocalSave();
   state.autoCount++;
   chrome.runtime.sendMessage({ type: 'incrementAutoCount' }).then((result) => {
     if (typeof result?.count === 'number') { state.autoCount = result.count; updateStatus(); renderAutoLog(); }
@@ -610,6 +616,7 @@ function recordAuto(p, req, mod, bodyChanged) {
 
 /** Record an auto-rewrite that the background worker made on another tab. */
 function recordAutoExternal(entry) {
+  queueLocalSave();
   state.autoCount = typeof entry.count === 'number' ? entry.count : state.autoCount + 1;
   state.autoLog.unshift({
     id: ++state.seq,
@@ -989,12 +996,14 @@ function markHistoryEdited(item, rel) {
 }
 
 function touchHistory(e) {
+  queueLocalSave();
   scheduleHistoryRender();
   if (e.id === state.selectedHistoryId) scheduleDetailRender();
 }
 
 let historyRenderPending = false;
 function scheduleHistoryRender() {
+  queueLocalSave();
   $('#historyCount').textContent = String(state.history.length);
   if (historyRenderPending) return;
   historyRenderPending = true;
@@ -1346,8 +1355,9 @@ function repeaterName(raw) {
   return m ? `${m[1]} ${m[2].split('?')[0]}`.slice(0, 40) : 'request';
 }
 
-function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000', follow = false } = {}) {
-  const r = { id: ++state.repSeq, raw, target, follow: !!follow, response: '', sent: '', meta: '', view: 'res', abort: null, snapshots: [], snapshotId: null };
+function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000', follow = false, assertions = '[]' } = {}) {
+  if (state.repeaters.length >= 100) { toast('Keep up to 100 Repeater tabs; save or close older tabs first.', 'error'); return activeRepeater(); }
+  const r = { id: ++state.repSeq, raw, target, follow: !!follow, assertions, tests: [], response: '', sent: '', meta: '', view: 'res', abort: null, snapshots: [], snapshotId: null };
   state.repeaters.push(r);
   state.activeRepeaterId = r.id;
   renderRepeater();
@@ -1371,6 +1381,8 @@ const activeRepeater = () => state.repeaters.find((r) => r.id === state.activeRe
 
 let saveTimer;
 function saveRepeaters() {
+  queueLocalSave();
+  if (labState.ready) return;
   clearTimeout(saveTimer);
   if (!state.settings.repRemember) {
     chrome.storage.local.remove(['repeaters', 'activeRepeaterId']).catch(() => {});
@@ -1426,6 +1438,7 @@ function renderRepeater() {
   $('#repEditor').value = r.raw;
   $('#repTarget').value = r.target;
   $('#repFollow').checked = !!r.follow;
+  $('#repAssertions').value = r.assertions || '[]';
   renderRepeaterResponse();
 }
 
@@ -1444,6 +1457,7 @@ function renderRepeaterResponse() {
   $('#repViewSent').classList.toggle('active', r.view === 'sent');
   const pre = $('#repResponse');
   const snapshot = snapshots.find((item) => String(item.id) === String(r.snapshotId));
+  renderAssertionResults($('#repTests'), snapshot?.tests || r.tests || []);
   const text = r.view === 'sent' ? (snapshot?.sent ?? r.sent) : (snapshot?.response ?? r.response);
   if (r.view === 'res' && state.settings.repPretty && text) {
     const i = text.indexOf('\n\n');
@@ -1494,10 +1508,12 @@ async function readResponseLimited(res, limit) {
 }
 
 async function sendRepeater(r, options = {}) {
+  if (labState.activeTest && !options.lab) return toast('Finish or stop the credential comparison first.', 'error');
   if (typeof workflowState !== 'undefined' && workflowState.runner.running && !options.runner) return toast('Stop the Runner before sending another request.', 'error');
   if (r.abort || repeaterBusy) return toast('Wait for the current Repeater request to finish or cancel it.', 'error');
-  let p, target;
+  let p, target, assertions;
   try {
+    assertions = Lab.parseAssertions(r.assertions || '[]');
     const prepared = options.prepared || Workflow.prepareRequest(r.raw, r.target.trim() || 'http://localhost', workspaceVariableText(), options.extra || {});
     target = new URL(prepared.target);
     p = prepared.parsed;
@@ -1604,15 +1620,19 @@ async function sendRepeater(r, options = {}) {
     repeaterBusy = false;
     r.abort = null;
     r.snapshotId = null;
+    r.tests = Lab.runAssertions(assertions, r.response, result);
+    result.tests = r.tests;
+    recordWorkbenchResponse(r, p, result, t0);
     if (!options.quiet && r.response) {
       r.snapshots ||= [];
       const id = (r.snapshotSeq || 0) + 1;
       r.snapshotSeq = id;
       const cap = (text) => text.length <= 200_000 ? text : text.slice(0, 200_000) + '\n[Snapshot preview truncated]';
-      r.snapshots.push({ id, label: `${id} · ${result.status || result.error} · ${fmtMs(result.duration)}`, response: cap(r.response), sent: cap(r.sent) });
+      r.snapshots.push({ id, label: `${id} · ${result.status || result.error} · ${fmtMs(result.duration)}`, response: cap(r.response), sent: cap(r.sent), tests: r.tests });
       if (r.snapshots.length > 5) r.snapshots.shift();
     }
     if (r.id === state.activeRepeaterId) { renderRepeaterResponse(); renderRepeater(); }
+    queueLocalSave();
   }
   return result;
 }
@@ -1634,6 +1654,9 @@ function switchView(name) {
   if (name === 'collections') renderCollections();
   if (name === 'inspector') renderInspector();
   if (name === 'runner') renderRunner();
+  if (name === 'security') renderSecurity();
+  if (name === 'workspace') renderWorkspace();
+  if (name === 'websocket') renderWebSockets();
 }
 
 function bindUi() {
@@ -1861,6 +1884,7 @@ async function cleanupStale() {
   await refreshTabs();
   await loadRepeaters();
   await bindWorkflow();
+  await bindLab();
   updateStatus();
   renderQueue();
   renderAutoLog();

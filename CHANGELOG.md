@@ -7,7 +7,13 @@
 - Site Map grouped by origin, method, and path with counts, statuses, average timings, query fields, History links, and endpoint export.
 - Inspector for repeated query/form fields, exact JSON values, cookies, response headers, and cookie attributes.
 - Payload Runner with sequential sends, delays, timeouts, stop/cancel, response-text checks, result comparison, replay, and CSV export.
-- Collections with names, folders, notes, import/export, shared `{{variables}}`, and opt-in local persistence.
+- Collections with names, folders, notes, assertions, Interceptor/Postman import, export, and shared `{{variables}}`.
+- API Builder with HTTP methods, JSON/form/raw bodies, Bearer/Basic/API key authentication, cURL export, and response assertions.
+- Declarative status/header/JSON Pointer/body/timing/size assertions in Builder, Repeater, Collections, and Runner, plus boundary payload presets.
+- Passive Security Review for transport, headers, CSP, framing, CORS, cookie flags, caching, URL credentials, and detailed error exposure; review/ignore status and report export.
+- Same-origin GET/HEAD/OPTIONS comparison with and without credential headers, cancellation, and response diff.
+- Passive WebSocket text/binary frame inspection, filtering, decoding, and export.
+- Automatic local IndexedDB persistence for the complete workbench, named environments, recovered paused text, full backup/restore with preview and undo, and optional AES-GCM password encryption.
 - cURL import, Repeater duplication, request timeouts, five response snapshots per tab, and compare-previous.
 - Hex encode/decode, SHA-256/SHA-512 hashing, and a keyboard tool switcher (⌘/Ctrl+K).
 
@@ -24,7 +30,8 @@
 - JSON and query rewrites preserve unrelated source formatting, encoding, and large numbers.
 - Multipart rules skip file uploads and match form field names exactly.
 - Repeater response reads and HTTP history now have bounded memory use.
-- Repeater tabs are kept in memory unless the user explicitly enables local persistence.
+- Workspace data is saved on the user’s PC by default, including history, response snapshots, tool drafts, and test results.
+- Builder, Repeater, Runner, and credential-comparison sends also appear in HTTP History, keeping earlier API calls available after the response pane changes.
 - Saved Repeater drafts from previous versions are preserved on upgrade.
 - Tab-only Auto mode state expires with the browser session.
 
@@ -38,3 +45,4 @@
 - Custom HTTP methods are shell-quoted in copied cURL commands.
 - Failed forwards remain in the intercept queue when they can be retried.
 - Temporary Repeater header rules are awaited and cleaned when the dashboard closes.
+- Backup imports validate all tool data before replacement; import sends no traffic, restores no live debugger handles, and leaves Auto mode off.

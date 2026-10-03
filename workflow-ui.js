@@ -3,14 +3,15 @@
    isStatic, selectedHistory, historyRequestRaw, historyResponseRaw, activeRepeater,
    newRepeater, sendRepeater, sendToRepeater, sendToComparer, renderRepeaterResponse,
    switchView, renderHistory, renderHistoryDetail, saveSettings, DEFAULT_RAW,
-   repeaterName, repeaterBusy, copyText, setRaw */
+   repeaterName, repeaterBusy, copyText, setRaw, Lab, labState, queueLocalSave,
+   renderAssertionResults, addEnvironment */
 
 const workflowState = {
   variables: '', remember: false, collections: [], collectionSeq: 0, selectedCollectionId: null,
   endpoints: [], inspector: null,
   runner: { running: false, controller: null, results: [], selectedId: null, planned: 0 },
 };
-const workspaceVariableText = () => workflowState.variables;
+const workspaceVariableText = () => workflowState.variables + '\n' + (labState.environments.find((env) => env.id === labState.environmentId)?.variables || '');
 
 function downloadLocal(text, name, type = 'application/json') {
   const link = document.createElement('a');
@@ -22,6 +23,8 @@ function downloadLocal(text, name, type = 'application/json') {
 
 let workspaceSaveTimer;
 function saveWorkspace() {
+  queueLocalSave();
+  if (labState.ready) return;
   clearTimeout(workspaceSaveTimer);
   state.settings.workspaceRemember = workflowState.remember;
   saveSettings();
@@ -46,6 +49,7 @@ function addCollection(request) {
     id: ++workflowState.collectionSeq, name: request.name || repeaterName(request.raw),
     folder: request.folder || 'General', notes: request.notes || '',
     raw: request.raw, target: request.target, follow: !!request.follow,
+    assertions: request.assertions || '[]',
   };
   workflowState.collections.push(item);
   workflowState.selectedCollectionId = item.id;
@@ -84,6 +88,8 @@ function renderCollections() {
   }
   $('#collectionFollow').checked = !!item?.follow;
   $('#collectionFollow').disabled = !item;
+  $('#collectionAssertions').value = item?.assertions || '[]';
+  $('#collectionAssertions').disabled = !item;
   $('#collectionOpen').disabled = !item;
   $('#collectionDelete').disabled = !item;
 }
@@ -150,13 +156,19 @@ function renderRunner() {
   const runner = workflowState.runner;
   $('#runnerStart').disabled = runner.running;
   $('#runnerStop').disabled = !runner.running;
-  for (const id of ['runnerTarget', 'runnerRequest', 'runnerPayloads', 'runnerDelay', 'runnerTimeout', 'runnerMatch', 'runnerClear']) $('#' + id).disabled = runner.running;
+  for (const id of ['runnerTarget', 'runnerRequest', 'runnerPayloads', 'runnerDelay', 'runnerTimeout', 'runnerMatch', 'runnerClear', 'runnerAssertions', 'runnerLoadPreset']) $('#' + id).disabled = runner.running;
   $('#runnerProgress').max = runner.planned || 1;
   $('#runnerProgress').value = runner.results.length;
   $('#runnerProgressText').textContent = `${runner.results.length} / ${runner.planned || 0} completed${runner.running ? ' · running' : ''}`;
-  $('#runnerTable tbody').innerHTML = runner.results.map((row) => `<tr data-id="${row.id}" class="${row.id === runner.selectedId ? 'selected' : ''}"><td>${row.id}</td><td title="${escapeHtml(row.payload)}">${escapeHtml(row.payload)}</td><td class="${row.error ? 'sx' : 's' + String(row.status)[0]}">${escapeHtml(row.error || row.status)}</td><td>${fmtMs(row.duration)}</td><td>${fmtSize(row.bytes)}</td><td class="${row.check === true ? 'check-pass' : row.check === false ? 'check-fail' : ''}">${row.check == null ? '—' : row.check ? 'Match' : 'No match'}</td><td>${row.truncated ? 'preview capped' : ''}</td></tr>`).join('');
+  $('#runnerTable tbody').innerHTML = runner.results.map((row) => {
+    const passed = (row.tests || []).filter((test) => test.pass).length;
+    const testCount = (row.tests || []).length;
+    const label = [row.check == null ? '' : row.check ? 'Match' : 'No match', testCount ? `${passed}/${testCount} tests` : ''].filter(Boolean).join(' · ') || '—';
+    return `<tr data-id="${row.id}" class="${row.id === runner.selectedId ? 'selected' : ''}"><td>${row.id}</td><td title="${escapeHtml(row.payload)}">${escapeHtml(row.payload)}</td><td class="${row.error ? 'sx' : 's' + String(row.status)[0]}">${escapeHtml(row.error || row.status)}</td><td>${fmtMs(row.duration)}</td><td>${fmtSize(row.bytes)}</td><td class="${row.check === false || passed < testCount ? 'check-fail' : row.check === true || testCount ? 'check-pass' : ''}">${label}</td><td>${row.truncated ? 'preview capped' : ''}</td></tr>`;
+  }).join('');
   $('#runnerEmpty').classList.toggle('hidden', runner.results.length > 0);
   const row = runner.results.find((result) => result.id === runner.selectedId);
+  renderAssertionResults($('#runnerTests'), row?.tests || []);
   setRaw($('#runnerResponse'), row?.response || '');
   $('#runnerCompare').disabled = !row || runner.results.length < 2;
   $('#runnerToRepeater').disabled = !row;
@@ -165,7 +177,7 @@ function renderRunner() {
 
 async function startRunner() {
   const runner = workflowState.runner;
-  if (runner.running || repeaterBusy) return toast('Finish or cancel the current request first.', 'error');
+  if (runner.running || repeaterBusy || labState.activeTest) return toast('Finish or cancel the current request first.', 'error');
   let requests;
   let payloads;
   const template = $('#runnerRequest').value;
@@ -174,6 +186,7 @@ async function startRunner() {
   const timeoutMs = Math.max(1, Math.min(120, Number($('#runnerTimeout').value) || 15)) * 1000;
   const match = $('#runnerMatch').value;
   try {
+    Lab.parseAssertions($('#runnerAssertions').value);
     if (template.length > 100_000) throw new Error('Runner templates are limited to 100,000 characters.');
     if (!/\{\{\s*payload\s*\}\}/.test(template)) throw new Error('Add {{payload}} to the request template.');
     if (/\{\{\s*payload\s*\}\}/.test(target)) throw new Error('Use {{payload}} in the request, keeping one target for the run.');
@@ -194,11 +207,12 @@ async function startRunner() {
   try {
     for (let i = 0; i < requests.length && !signal.aborted; i++) {
       const request = requests[i];
-      const replay = { id: -1, raw: request.raw, target: request.target, follow: false, response: '', sent: '', abort: null };
+      const replay = { id: -1, raw: request.raw, target: request.target, follow: false, response: '', sent: '', abort: null, assertions: $('#runnerAssertions').value };
       const result = await sendRepeater(replay, { runner: true, quiet: true, signal, timeoutMs, prepared: request });
       const response = replay.response || result?.error || '';
       const row = { id: i + 1, payload: payloads[i], ...result, response: response.slice(0, 100_000) + (response.length > 100_000 ? '\n[Runner preview truncated]' : ''), raw: request.raw, target: request.target, check: match ? response.includes(match) : null };
       runner.results.push(row);
+      queueLocalSave();
       runner.selectedId = row.id;
       renderRunner();
       if (signal.aborted || i === requests.length - 1) break;
@@ -215,6 +229,7 @@ async function startRunner() {
     $('#runnerMeta').textContent = `${signal.aborted ? 'Stopped' : 'Finished'} · ${runner.results.length} requests · ${runner.results.filter((row) => row.error).length} errors`;
     renderRunner();
     renderRepeaterResponse();
+    queueLocalSave();
   }
 }
 
@@ -322,7 +337,7 @@ async function bindWorkflow() {
   $('#runnerToRepeater').addEventListener('click', () => { const row = workflowState.runner.results.find((result) => result.id === workflowState.runner.selectedId); if (row) sendToRepeater(row.raw, row.target); });
   $('#runnerExport').addEventListener('click', () => {
     const header = ['#', 'payload', 'status', 'duration_ms', 'bytes', 'check', 'error'];
-    const lines = workflowState.runner.results.map((row) => [row.id, row.payload, row.status, Math.round(row.duration || 0), row.bytes, row.check == null ? '' : row.check ? 'match' : 'no match', row.error]);
+    const lines = workflowState.runner.results.map((row) => [row.id, row.payload, row.status, Math.round(row.duration || 0), row.bytes, [row.check == null ? '' : row.check ? 'match' : 'no match', ...(row.tests || []).map((test) => `${test.pass ? 'PASS' : 'FAIL'} ${test.label}`)].filter(Boolean).join('; '), row.error]);
     downloadLocal(Workflow.csvRows([header, ...lines]), 'interceptor-run.csv', 'text/csv');
   });
 
@@ -353,7 +368,7 @@ async function bindWorkflow() {
     toast(workflowState.remember ? 'Requests and variables will be saved locally.' : 'Saved workspace removed; current requests remain in memory.');
   });
   $('#collectionExport').addEventListener('click', () => {
-    const requests = workflowState.collections.map(({ name, folder, raw, target, follow, notes }) => ({ name, folder, raw, target, follow, notes }));
+    const requests = workflowState.collections.map(({ name, folder, raw, target, follow, notes, assertions }) => ({ name, folder, raw, target, follow, notes, assertions }));
     // Environment tokens are deliberately omitted from portable collections.
     downloadLocal(JSON.stringify({ format: 'interceptor-collection', version: 1, requests }, null, 2), 'interceptor-collection.json');
     toast('Collection exported. Variables stay in this workspace.');
@@ -364,12 +379,15 @@ async function bindWorkflow() {
     if (!file) return;
     try {
       if (file.size > 5_000_000) throw new Error('Collection files must be smaller than 5 MB.');
-      const requests = Workflow.importCollection(JSON.parse(await file.text()));
+      const data = JSON.parse(await file.text());
+      const postman = data.info && data.item ? Lab.importPostman(data) : null;
+      const requests = postman ? postman.requests : Workflow.importCollection(data);
       if (requests.length + workflowState.collections.length > 100) throw new Error('Import would exceed 100 saved requests.');
       if ([...requests, ...workflowState.collections].reduce((n, request) => n + request.raw.length, 0) > 5_000_000) throw new Error('Import would exceed the collection text limit.');
       for (const request of requests) workflowState.collections.push({ ...request, id: ++workflowState.collectionSeq });
+      if (postman?.variables) addEnvironment(String(data.info.name || 'Postman').slice(0, 100), postman.variables);
       workflowState.selectedCollectionId = workflowState.collections.at(-1)?.id || null;
-      saveWorkspace(); renderCollections(); toast(`Imported ${requests.length} requests.`);
+      saveWorkspace(); renderCollections(); toast(`Imported ${requests.length} requests.${postman?.warnings.length ? ' ' + postman.warnings.slice(0, 3).join(' ') : ''}`);
     } catch (error) { toast(`Collection import failed: ${error.message}`, 'error'); }
     finally { event.target.value = ''; }
   });

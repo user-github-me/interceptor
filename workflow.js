@@ -211,7 +211,8 @@
     if (input.requests.reduce((n, item) => n + String(item?.raw || '').length, 0) > 5_000_000) throw new Error('Collection request text is limited to 5 million characters.');
     return input.requests.map((item, i) => {
       if (!item || typeof item.raw !== 'string' || typeof item.target !== 'string' || item.raw.length > 500_000 || item.target.length > 10_000) throw new Error(`Invalid collection request ${i + 1}.`);
-      return { name: String(item.name || `Request ${i + 1}`).slice(0, 100), folder: String(item.folder || 'General').slice(0, 80), raw: item.raw, target: item.target, follow: !!item.follow, notes: String(item.notes || '').slice(0, 2000) };
+      if (item.assertions != null && (typeof item.assertions !== 'string' || item.assertions.length > 100_000)) throw new Error('Invalid saved assertions.');
+      return { name: String(item.name || `Request ${i + 1}`).slice(0, 100), folder: String(item.folder || 'General').slice(0, 80), raw: item.raw, target: item.target, follow: !!item.follow, notes: String(item.notes || '').slice(0, 2000), assertions: item.assertions || '[]' };
     });
   }
 

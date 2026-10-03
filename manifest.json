@@ -3,7 +3,7 @@
   "name": "Interceptor - HTTP Proxy for Web Devs",
   "short_name": "Interceptor",
   "version": "1.1.0",
-  "description": "Inspect and edit HTTP traffic, replay requests, run payload tests, map APIs, and organize collections in a local workbench.",
+  "description": "Inspect HTTP/WebSockets, test APIs, review security, and back up your local workspace. Includes Repeater, Runner and collections.",
   "permissions": [
     "debugger",
     "tabs",

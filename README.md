@@ -30,13 +30,18 @@ Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, 
 - 📜 **HTTP History** — a live table of every request from the target tab, with full headers (including `Cookie`/`Set-Cookie`), bodies, timing and size. Search URLs, headers, and bodies; filter by method/status/type; import or export **HAR**.
 - 🔁 **Repeater** — hand-craft a raw request and fire it as many times as you like. What you type is exactly what goes on the wire — including `Cookie`, `Origin`, `User-Agent` and `Sec-*` headers.
 - 📥 **cURL import** — paste a command from DevTools to create an editable Repeater request. Nothing executes or sends during import.
-- 🗂️ **Collections & variables** — organize named requests in folders with notes. Reuse `{{host}}`, `{{baseUrl}}`, or your own variables across Repeater and Runner. Import/export portable collections and optionally keep the workspace locally.
+- 🗂️ **Collections & variables** — organize named requests in folders with notes. Reuse `{{host}}`, `{{baseUrl}}`, or your own variables across Repeater and Runner. Import/export portable collections; work is saved locally automatically.
 - 🧪 **Runner** — replace a value with `{{payload}}`, try up to 50 values sequentially, and inspect status, timing, size, and response-text checks. Cancel a run, export CSV, or compare results.
 - 🗺️ **Site Map** — group captured requests into endpoints by origin, method, and path. See call counts, statuses, timing, and query field names; jump back to History or replay an endpoint.
 - 🔎 **Inspector** — read query/form fields, nested JSON values, request cookies, response headers, and `Set-Cookie` attributes. Send any field to Decoder.
 - ⚡ **Auto mode** — force one or more fields to a fixed value automatically. Limit changes with URL include/exclude patterns, then run against **this tab** or **all tabs** from the toolbar popup.
 - ⚖️ **Comparer** — send responses from History or Repeater into a side-by-side line diff, with optional JSON normalization and a copyable unified diff.
 - 🔓 **Decoder** — JSON, URL, Base64, hex, HTML entities, JWT inspection, and SHA-256/SHA-512 hashes, all locally.
+- 🧰 **API Builder** — Postman-style HTTP requests with JSON/form/raw bodies, Bearer/Basic/API key auth, variables, response tests, and saved collections.
+- ✅ **Response assertions** — check status, headers, JSON Pointer values, response text, time, and size in Builder, Repeater, and Runner. No test scripts execute.
+- 🛡️ **Security Review** — passive checks of captured headers, cookies, CORS, caching, transport, URL credentials, and debug errors; manual credential comparison and reports.
+- ⇌ **WebSockets** — observe sent/received text and binary frame previews from the attached tab, filter, decode, and export.
+- 💾 **Workspace** — automatic saving on your PC, named environments, full backup/import with restore preview and undo, and optional password encryption.
 - 🕘 **Response snapshots** — Repeater retains the last five responses for each tab and compares successive sends. Set a request timeout and duplicate requests with one click.
 - 🧩 Works in **Brave, Chrome and Edge**. Pure JavaScript, **no build step**, no dependencies, no data leaves your machine.
 
@@ -115,6 +120,58 @@ Runner uses one origin per run, sends one request at a time, and follows no redi
 
 Use **⌘/Ctrl+K** to jump to any workbench tool.
 
+### API requests, tests, and local backups
+
+<table>
+  <tr><td width="50%"><img src="docs/screenshots/builder.png" alt="API Builder with request authentication and passing assertions"><br><sub><b>API Builder</b> — requests, authentication, and response tests.</sub></td><td width="50%"><img src="docs/screenshots/security.png" alt="Security Review of captured HTTP traffic"><br><sub><b>Security Review</b> — contextual observations and credential comparisons.</sub></td></tr>
+  <tr><td width="50%"><img src="docs/screenshots/workspace.png" alt="Local workspace backup and environments"><br><sub><b>Workspace</b> — local persistence, environments, encrypted backup and restore.</sub></td><td width="50%"><img src="docs/screenshots/websocket.png" alt="Captured sent and received WebSocket frames"><br><sub><b>WebSockets</b> — sent and received messages from the attached tab.</sub></td></tr>
+</table>
+
+1. In **Workspace**, create an environment (such as Local or Staging) with `baseUrl` and `token` variables. Environment values override the shared values in Collections.
+2. In **API Builder**, select a method, enter `{{baseUrl}}/api/health`, choose authentication, and add headers or a JSON/form body. Click **Send request** to send it, or **Save request** to keep it in Collections.
+3. Add response assertions in Builder, Repeater, or Runner:
+
+```json
+[
+  { "type": "status", "equals": 200 },
+  { "type": "header", "name": "Content-Type", "contains": "application/json" },
+  { "type": "json", "path": "/data/active", "equals": true },
+  { "type": "time", "max": 1000 }
+]
+```
+
+JSON paths use JSON Pointer (`/items/0/id`, `~1` for `/`, `~0` for `~`). Headers
+support `equals`, `contains`, or `absent: true`; JSON fields support `equals` or
+`absent: true`. Other checks: `bodyContains` with `value`, and `size` with `max`
+bytes. JSON assertions use JavaScript number precision; inspect exact large
+numeric tokens in Inspector or use literal body text checks. Failed network sends
+fail every assertion. Truncated responses are labeled as capped previews.
+
+**Collections → Import collection** accepts Interceptor JSON and Postman v2-style
+collections, including nested folders, variables, raw/form bodies, and bearer
+auth. Postman variables become an environment. Unsupported auth/body modes are
+reported; file uploads and pre-request/test scripts are not imported or executed.
+Ordinary collection exports omit variables; full workspace backups include them.
+
+**Security Review → Review HTTP History** sends no traffic. Its observations are
+context for testing, not confirmed vulnerabilities. Credential comparison sends
+two GET/HEAD/OPTIONS requests to one origin with redirects off; it strips only
+credential headers, keeping query/body values. Successful anonymous responses
+may be intentional. **WebSockets** records frames while Intercept has a tab
+attached; it does not pause or inject messages.
+
+All workbench data saves automatically in the current browser profile’s local
+database, within the documented preview limits. Outgoing Builder, Repeater,
+Runner and credential-comparison requests also appear in **HTTP History**.
+**Workspace → Download full
+backup** exports history, snapshots, collections, environments, results, tool
+drafts, security observations, and frames. Set a password of at least eight
+characters to encrypt it. To restore, enter the same password, choose **Import
+backup**, review the counts, then choose **Replace workspace**. Detach and finish
+active requests first. Restore sends no requests, leaves Auto mode off, and keeps
+a local undo copy. Backups can contain credentials; downloaded files remain after
+uninstalling. Storage belongs to this browser profile, not a cloud account.
+
 ## Architecture
 
 Interceptor is built on the **Chrome DevTools Protocol (CDP)** via the `chrome.debugger` API — the only way an extension can genuinely pause and mutate live traffic (the `webRequest` API can observe and block, but not rewrite bodies or edit responses).
@@ -169,7 +226,7 @@ Use **URL safety scope** to constrain those rules. Each line can be plain text, 
 |---|---|
 | `debugger` | The core: pause, edit, forward and drop live requests/responses via CDP. |
 | `tabs` | List tabs to target and coordinate attach/detach. |
-| `storage` | Remember settings and rules; Repeater tabs, Collections, and variables only when local persistence is enabled. |
+| `storage` | Save local settings/rules and session coordination; the complete workspace is saved locally in IndexedDB. |
 | `webRequest` | Show the *"Actual request sent"* view in Repeater. |
 | `declarativeNetRequestWithHostAccess` | Let Repeater send otherwise-forbidden headers (`Cookie`, `Origin`, `User-Agent`, …) exactly as typed. |
 | `clipboardWrite` | Copy raw messages, cURL commands, decoded output, and diffs when you click a copy button. |
@@ -180,10 +237,10 @@ There are no analytics or telemetry. Traffic is processed locally; Repeater send
 ## Limitations
 
 - One **manually-attached** tab at a time for the deep intercept/history/repeater workflow (Auto mode can cover all tabs).
-- WebSockets and Server-Sent Events aren't intercepted.
+- WebSocket frames can be inspected but are not paused/modified. Server-Sent Events are not intercepted as individual events.
 - Bodies are edited as UTF-8 text; binary and oversized bodies are passed through unchanged. History keeps up to 2,500 entries, 750,000 characters per body, and a 64-million-character total text budget. Repeater previews up to 4 MB per response.
-- Repeater drafts stay in memory by default. Enable **Remember tabs locally** to keep them across panel sessions; existing saved drafts are preserved on upgrade.
-- Collections and variables stay in memory unless **Remember workspace locally** is enabled. Runner is limited to 50 payloads and keeps capped response previews. Site Map covers recorded/imported traffic; it does not crawl sites.
+- Workspaces save automatically in the browser profile on your PC. Repeater supports 100 tabs; Collections 100 requests; environments 50; WebSockets 1,000 capped frames. Browser disk quotas still apply; the UI reports save failures and offers backup download.
+- Runner is limited to 50 payloads and keeps capped response previews. Site Map and passive Security Review cover recorded/imported traffic; they do not crawl sites or prove vulnerabilities automatically.
 - cURL import supports literal URLs, method, headers, body, cookies, Basic auth, and redirects. Unsupported options and file uploads are rejected instead of silently omitted.
 - Browsers can't send a body with `GET`/`HEAD`, so Repeater can't either.
 - Traffic from other-process iframes and some service workers may not be captured.
@@ -207,7 +264,9 @@ node tests/browser-integration.mjs http://127.0.0.1:9226
 
 It checks debugger attachment, request/response edits, Auto scope and worker
 handoff, Repeater headers and rule cleanup, response limits, HAR import,
-Inspector, Site Map, variables, Runner cancellation, snapshots, and workspace persistence.
+Inspector, Site Map, variables, Runner cancellation, snapshots, Builder authentication
+and assertions, credential comparisons, live WebSocket frames, encrypted full
+backups, restoration without traffic, and local persistence across reloads.
 
 ```
 manifest.json      MV3 manifest
@@ -218,6 +277,9 @@ http.js            dependency-free HTTP + rewrite engine (unit-tested)
 workbench.js       HAR import, comparer, and decoder helpers
 workflow.js        cURL import, variables, endpoint mapping, and inspection helpers
 workflow-ui.js/.css collections, Inspector, Site Map, Runner, and tool switcher
+lab.js             assertions, passive review, Postman import, backup validation/encryption
+lab-ui.js/.css      API Builder, Security Review, WebSockets, environments, backup UI
+local-store.js     IndexedDB storage for complete local workspaces
 tests/             Node tests for parsing, rewriting, scope, HAR, diff, and codecs
 icons/             extension icons
 docs/screenshots/  images used in this README

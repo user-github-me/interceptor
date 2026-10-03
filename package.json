@@ -4,7 +4,7 @@
   "private": true,
   "description": "Dependency-free tests and checks for the Interceptor browser extension",
   "scripts": {
-    "check": "node --check http.js && node --check workbench.js && node --check workflow.js && node --check workflow-ui.js && node --check background.js && node --check dashboard.js && node --check popup.js",
+    "check": "node --check http.js && node --check workbench.js && node --check workflow.js && node --check workflow-ui.js && node --check lab.js && node --check local-store.js && node --check lab-ui.js && node --check background.js && node --check dashboard.js && node --check popup.js",
     "test": "node --test tests/*.test.js"
   }
 }

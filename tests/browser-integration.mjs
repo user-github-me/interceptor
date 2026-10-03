@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 // Run against an isolated Chromium profile with this extension loaded.
 const debuggingOrigin = process.argv[2] || 'http://127.0.0.1:9226';
@@ -52,7 +53,9 @@ async function until(expression) {
   throw new Error(`Condition not reached: ${expression}`);
 }
 
+let fixtureRequestCount = 0;
 const server = http.createServer((req, res) => {
+  fixtureRequestCount++;
   let body = '';
   req.on('data', (chunk) => { body += chunk; });
   req.on('end', () => {
@@ -69,6 +72,14 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ url: req.url, body, headers: req.headers }));
     }
   });
+});
+const socketConnections = new Set();
+server.on('upgrade', (req, connection) => {
+  socketConnections.add(connection);
+  connection.on('close', () => socketConnections.delete(connection));
+  const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  connection.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  setTimeout(() => { if (!connection.destroyed) { const payload = Buffer.from('{"event":"fixture-live-message"}'); connection.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload])); } }, 100);
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const fixture = `http://127.0.0.1:${server.address().port}`;
@@ -226,11 +237,10 @@ try {
   assert.equal(collection.item.name, 'Validation cases');
   assert.ok(collection.count > 0);
   assert.equal(await evaluate(`(async()=>{
-    workflowState.remember=true;saveWorkspace();await new Promise(r=>setTimeout(r,400));
-    return (await chrome.storage.local.get('workspace')).workspace.requests[0].name;
+    saveWorkspace();await flushLocalSave();
+    return (await LocalStore.read()).workspace.collections[0].name;
   })()`), 'Validation cases');
-  await evaluate('(async()=>{workflowState.remember=false;saveWorkspace();await new Promise(r=>setTimeout(r,50))})()');
-  assert.equal(await evaluate("chrome.storage.local.get('workspace').then(data=>data.workspace===undefined)"), true);
+  assert.equal(await evaluate("(async()=>{const s=await LocalStore.read();return s.workspace.history.length>0 && s.workspace.repeaters.some(r=>r.snapshots?.length===2)})()"), true);
   const curlUi = await evaluate(`(()=>{
     document.querySelector('#repImportCurl').click();
     document.querySelector('#curlInput').value=${JSON.stringify(`curl '${fixture}/curl' -H 'X-Test: imported'`)};
@@ -242,6 +252,82 @@ try {
   await evaluate(`(()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}));document.querySelector('#toolSearch').value='Site Map';document.querySelector('#toolSearch').dispatchEvent(new Event('input'));document.querySelector('#toolList button').click()})()`);
   assert.equal(await evaluate("document.querySelector('.view.active').id"), 'view-sitemap');
   assert.equal(await evaluate("Workbench.hash('SHA-256','abc')"), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  const builder = await evaluate(`(async()=>{
+    addEnvironment('Local test', 'baseUrl=${fixture}\\ntoken=builder-test-token');
+    document.querySelector('#builderUrl').value='{{baseUrl}}/builder';
+    document.querySelector('#builderMethod').value='POST';document.querySelector('#builderAuth').value='bearer';
+    document.querySelector('#builderAuthValue').value='{{token}}';document.querySelector('#builderBodyMode').value='json';
+    document.querySelector('#builderBody').value='{"amount":9007199254740993}';
+    document.querySelector('#builderAssertions').value='[{"type":"status","equals":200},{"type":"json","path":"/headers/authorization","equals":"Bearer builder-test-token"}]';
+    await sendBuilder();return {response:labState.builder.response,tests:labState.builder.tests};
+  })()`);
+  assert.match(builder.response, /9007199254740993/);
+  assert.ok(builder.tests.every((test) => test.pass));
+  assert.equal(await evaluate('state.history.at(-1).source'), 'API Builder', 'API tool sends are kept in local HTTP History');
+  assert.match(await evaluate('buildApiRequest().raw'), /\{\{baseUrl\}\}/, 'saved Builder requests retain environment URL variables');
+  assert.match(await evaluate('buildApiRequest().raw'), /Bearer \{\{token\}\}/, 'saved Builder requests retain bearer token variables');
+  await evaluate(`(()=>{
+    newRepeater({raw:'GET /auth-compare HTTP/1.1\\nHost: 127.0.0.1:${server.address().port}\\nAuthorization: Bearer auth-test\\nCookie: session=fixture\\n\\n',target:${JSON.stringify(fixture)}});
+    document.querySelector('#securitySource').value='repeater';
+  })()`);
+  const comparison = await evaluate('(async()=>{await compareCredentials();return labState.comparison})()');
+  assert.match(comparison.left, /Bearer auth-test/);
+  assert.doesNotMatch(comparison.right, /Bearer auth-test|session=fixture/);
+  assert.deepEqual(await evaluate('chrome.declarativeNetRequest.getSessionRules()'), []);
+  await evaluate(`(async()=>{
+    document.querySelector('#securityScan').click();document.querySelector('#tabSelect').value='${fixtureTab}';await attach();
+    await cdp('Runtime.evaluate',{expression:'window.fixtureSocket=new WebSocket(${JSON.stringify(fixture.replace('http:', 'ws:') + '/live')});window.fixtureSocket.onopen=()=>window.fixtureSocket.send("fixture-outbound");'});
+  })()`);
+  await until('labState.websocketFrames.some(f=>f.direction==="Sent") && labState.websocketFrames.some(f=>f.direction==="Received")');
+  assert.ok(await evaluate('labState.websocketFrames.some(f=>f.data.includes("fixture-live-message"))'));
+  await evaluate('(async()=>{await cdp("Runtime.evaluate",{expression:"window.fixtureSocket.close()"});await detach()})()');
+  const persisted = await evaluate(`(async()=>{
+    await flushLocalSave();const backup=captureWorkspace();Lab.validateBackup(backup);
+    const encrypted=await Lab.encryptBackup(backup,'fixture-backup-password');
+    const decrypted=await Lab.decryptBackup(encrypted,'fixture-backup-password');
+    window.fixtureBackup=decrypted;
+    return {history:backup.workspace.history.length,repeaters:backup.workspace.repeaters.length,collections:backup.workspace.collections.length,frames:backup.workspace.websocketFrames.length,environments:backup.workspace.environments.length,results:backup.workspace.runnerResults.length};
+  })()`);
+  assert.ok(persisted.history > 0);
+  assert.ok(persisted.environments > 0);
+  const requestsBeforeRestore = fixtureRequestCount;
+  await evaluate('(async()=>{workflowState.collections=[];labState.environments=[];state.history=[];await applyBackup(Lab.validateBackup(window.fixtureBackup))})()');
+  assert.equal(fixtureRequestCount, requestsBeforeRestore, 'workspace restore sends no HTTP requests');
+  assert.equal(await evaluate('workflowState.collections.length'), persisted.collections);
+  assert.equal(await evaluate('state.history.length'), persisted.history);
+  assert.equal(await evaluate('state.settings.autoMode'), false);
+  assert.equal(await evaluate('state.attached'), false);
+  await call('Page.reload');
+  await until('typeof labState !== "undefined" && labState.ready && document.readyState === "complete"');
+  assert.equal(await evaluate('state.history.length'), persisted.history);
+  assert.equal(await evaluate('state.repeaters.length'), persisted.repeaters);
+  assert.equal(await evaluate('workflowState.collections.length'), persisted.collections);
+  assert.equal(await evaluate('labState.websocketFrames.length'), persisted.frames);
+  assert.equal(await evaluate('labState.environments.length'), persisted.environments);
+  assert.equal(await evaluate('workflowState.runner.results.length'), persisted.results);
+  assert.match(await evaluate('labState.builder.response'), /9007199254740993/);
+  // Exercise the file-import preview and explicit restore action.
+  const currentBackup = await evaluate('captureWorkspace()');
+  const backupPath = `${process.cwd()}/local/browser-fixture-backup.json`;
+  await fs.writeFile(backupPath, JSON.stringify(currentBackup));
+  await call('DOM.enable');
+  let root = await call('DOM.getDocument');
+  let fileInput = await call('DOM.querySelector', { nodeId: root.root.nodeId, selector: '#backupFile' });
+  await call('DOM.setFileInputFiles', { nodeId: fileInput.nodeId, files: [backupPath] });
+  await until('labState.pendingBackup && !document.querySelector("#backupPreview").classList.contains("hidden")');
+  assert.match(await evaluate('document.querySelector("#backupSummary").textContent'), /No requests are sent/);
+  const uiRequestsBeforeRestore = fixtureRequestCount;
+  await evaluate('document.querySelector("#backupRestore").click()');
+  await until('!labState.pendingBackup');
+  assert.equal(fixtureRequestCount, uiRequestsBeforeRestore);
+  await fs.writeFile(backupPath, '{"format":"interceptor-backup","version":1,"workspace":{"history":"bad"}}');
+  root = await call('DOM.getDocument');
+  fileInput = await call('DOM.querySelector', { nodeId: root.root.nodeId, selector: '#backupFile' });
+  await call('DOM.setFileInputFiles', { nodeId: fileInput.nodeId, files: [backupPath] });
+  await until('document.querySelector("#toast").textContent.includes("Backup import failed")');
+  assert.equal(await evaluate('labState.pendingBackup'), null);
+  assert.equal(await evaluate('state.history.length'), persisted.history);
+  await fs.rm(backupPath);
   assert.deepEqual(exceptions, []);
 
   if (process.argv.includes('--screenshots')) {
@@ -254,7 +340,7 @@ try {
       document.querySelector('#decoderInput').value='{"orderId":9007199254740993,"amount":1,"validated":true}';runDecoder();
       document.querySelector('#toast').classList.remove('show');
     })()`);
-    for (const view of ['history', 'repeater', 'comparer', 'decoder', 'intercept', 'sitemap', 'inspector', 'runner', 'collections']) {
+    for (const view of ['history', 'repeater', 'comparer', 'decoder', 'intercept', 'sitemap', 'inspector', 'runner', 'collections', 'builder', 'security', 'websocket', 'workspace']) {
       if (view === 'intercept') {
         await evaluate(`(async()=>{
           document.querySelector('#tabSelect').value='${fixtureTab}';await attach();
@@ -285,7 +371,7 @@ try {
     assert.equal(overflow, false, 'narrow workbench fits the viewport');
     shot = await call('Page.captureScreenshot', { format: 'png' });
     await fs.writeFile('local/screenshots-1.1.0/decoder-narrow.png', Buffer.from(shot.data, 'base64'));
-    for (const view of ['runner', 'collections', 'inspector', 'sitemap']) {
+    for (const view of ['runner', 'collections', 'inspector', 'sitemap', 'builder', 'security', 'websocket', 'workspace']) {
       await evaluate(`switchView('${view}')`);await delay(100);
       assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, `${view} fits narrow viewport`);
     }
@@ -297,13 +383,14 @@ try {
   assert.match(await evaluate('workflowState.variables'), /host=127\.0\.0\.1/);
   await evaluate('(()=>{switchView("collections");document.querySelector("#collectionOpen").click()})()');
   assert.match(await evaluate('activeRepeater().raw'), /\{\{payload\}\}/);
-  await evaluate('(async()=>{workflowState.remember=false;saveWorkspace();await new Promise(r=>setTimeout(r,50))})()');
-  assert.equal(await evaluate("chrome.storage.local.get('workspace').then(data=>data.workspace===undefined)"), true);
+  await evaluate('(async()=>{saveWorkspace();await flushLocalSave()})()');
+  assert.equal(await evaluate('LocalStore.read().then(data=>data.workspace.collections.length>0)'), true);
   assert.deepEqual(exceptions, []);
-  console.log('PASS: live intercept/Auto/Repeater, HAR, Site Map, Inspector, variables, payload Runner and cancellation, snapshots, collection persistence; no runtime exceptions.');
+  console.log('PASS: intercept/Auto/Repeater, Runner and cancellation, API Builder/auth/assertions, credential comparison, live WebSocket capture, full encrypted backup/restore/reload; no runtime exceptions.');
 } finally {
   if (fixtureTab) await evaluate(`chrome.tabs.remove(${fixtureTab})`).catch(() => {});
   await call('Page.close').catch(() => {});
   socket.close();
+  for (const connection of socketConnections) connection.destroy();
   await new Promise((resolve) => server.close(resolve));
 }
