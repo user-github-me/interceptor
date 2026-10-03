@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contribution guide
+    url: https://github.com/user-github-me/interceptor/blob/main/CONTRIBUTING.md
+    about: Read the issue-to-PR workflow, setup, and verification steps.
+  - name: Current workbench upgrade
+    url: https://github.com/user-github-me/interceptor/pull/1
+    about: Review the v1.1 implementation and its linked feature issues before starting overlapping work.

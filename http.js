@@ -144,16 +144,56 @@
     }
   }
 
+  /** Format JSON without converting number tokens to floating point values. */
+  function formatJson(text, pretty = true) {
+    JSON.parse(text); // Validate syntax; use the source tokens for output.
+    let out = '';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    const line = () => '\n' + '  '.repeat(depth);
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inString) {
+        out += c;
+        if (escaped) escaped = false;
+        else if (c === '\\') escaped = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (/\s/.test(c)) continue;
+      if (c === '"') { inString = true; out += c; }
+      else if (c === '{' || c === '[') {
+        out += c;
+        depth++;
+        let nextIndex = i + 1;
+        while (/\s/.test(text[nextIndex] || '')) nextIndex++;
+        const next = text[nextIndex];
+        if (pretty && next !== '}' && next !== ']') out += line();
+      } else if (c === '}' || c === ']') {
+        depth--;
+        let prevIndex = i - 1;
+        while (/\s/.test(text[prevIndex] || '')) prevIndex--;
+        const prev = text[prevIndex];
+        if (pretty && prev !== '{' && prev !== '[') out += line();
+        out += c;
+      } else if (c === ',') out += pretty ? ',' + line() : ',';
+      else if (c === ':') out += pretty ? ': ' : ':';
+      else out += c;
+    }
+    return out;
+  }
+
   function prettyBody(body) {
     const t = (body || '').trim();
     if (!t || !/^[[{]/.test(t)) return body;
-    try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return body; }
+    try { return formatJson(t); } catch { return body; }
   }
 
   function toCurl({ method, url, headers, body }) {
     const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
     const parts = [`curl ${q(url)}`];
-    if (method !== 'GET' || body) parts.push(`-X ${method}`);
+    if (method !== 'GET' || body) parts.push(`-X ${q(method)}`);
     for (const h of headersToList(headers)) {
       if (h.name.startsWith(':') || /^(host|content-length)$/i.test(h.name)) continue;
       parts.push(`-H ${q(`${h.name}: ${h.value}`)}`);
@@ -174,20 +214,91 @@
     return value;
   }
 
-  function rewriteJson(node, param, value, changes, path) {
-    if (Array.isArray(node)) {
-      node.forEach((v, i) => rewriteJson(v, param, value, changes, `${path}[${i}]`));
-    } else if (node && typeof node === 'object') {
-      for (const k of Object.keys(node)) {
-        const p = path ? `${path}.${k}` : k;
-        if (eqName(k, param) && (node[k] === null || typeof node[k] !== 'object')) {
-          const to = coerce(node[k], value);
-          if (node[k] !== to) { changes.push({ where: 'json', key: p, from: node[k], to }); node[k] = to; }
-        } else {
-          rewriteJson(node[k], param, value, changes, p);
+  /** Rewrite JSON primitives while preserving all unrelated source bytes. */
+  function rewriteJsonText(text, param, value, changes) {
+    let pos = 0;
+    const replacements = [];
+    const ws = () => { while (/[ \t\r\n]/.test(text[pos] || '')) pos++; };
+    const stringToken = () => {
+      const start = pos;
+      if (text[pos] !== '"') throw new Error('Expected JSON string');
+      for (pos++; pos < text.length; pos++) {
+        if (text[pos] === '\\') { pos++; continue; }
+        if (text[pos] === '"') {
+          pos++;
+          const raw = text.slice(start, pos);
+          return { start, end: pos, value: JSON.parse(raw) };
         }
       }
+      throw new Error('Unterminated JSON string');
+    };
+    const primitiveToken = () => {
+      ws();
+      if (text[pos] === '"') return stringToken();
+      const start = pos;
+      const m = /^(?:-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)/.exec(text.slice(pos));
+      if (!m) throw new Error('Expected JSON value');
+      pos += m[0].length;
+      return { start, end: pos, value: JSON.parse(m[0]) };
+    };
+    const valueToken = (path) => {
+      ws();
+      if (text[pos] === '{') { objectToken(path); return; }
+      if (text[pos] === '[') { arrayToken(path); return; }
+      primitiveToken();
+    };
+    const objectToken = (path) => {
+      pos++;
+      ws();
+      if (text[pos] === '}') { pos++; return; }
+      while (pos < text.length) {
+        ws();
+        const key = stringToken().value;
+        ws();
+        if (text[pos++] !== ':') throw new Error('Expected colon');
+        const childPath = path ? `${path}.${key}` : key;
+        ws();
+        if (eqName(key, param) && text[pos] !== '{' && text[pos] !== '[') {
+          const token = primitiveToken();
+          const numeric = (typeof token.value === 'number' || token.value === null) && /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value);
+          const to = numeric ? value : coerce(token.value, value);
+          const replacement = numeric ? value : JSON.stringify(to);
+          if (text.slice(token.start, token.end) !== replacement) {
+            replacements.push({ start: token.start, end: token.end, text: replacement });
+            changes.push({ where: 'json', key: childPath, from: token.value, to: numeric && Number.isSafeInteger(Number(value)) ? Number(value) : to });
+          }
+        } else {
+          valueToken(childPath);
+        }
+        ws();
+        if (text[pos] === '}') { pos++; return; }
+        if (text[pos++] !== ',') throw new Error('Expected comma');
+      }
+      throw new Error('Unterminated JSON object');
+    };
+    const arrayToken = (path) => {
+      pos++;
+      ws();
+      if (text[pos] === ']') { pos++; return; }
+      let index = 0;
+      while (pos < text.length) {
+        valueToken(`${path}[${index++}]`);
+        ws();
+        if (text[pos] === ']') { pos++; return; }
+        if (text[pos++] !== ',') throw new Error('Expected comma');
+      }
+      throw new Error('Unterminated JSON array');
+    };
+    ws();
+    valueToken('');
+    ws();
+    if (pos !== text.length) throw new Error('Unexpected JSON data');
+    let out = text;
+    for (let i = replacements.length - 1; i >= 0; i--) {
+      const r = replacements[i];
+      out = out.slice(0, r.start) + r.text + out.slice(r.end);
     }
+    return out;
   }
 
   function rewriteUrlEncoded(body, param, value, changes, where) {
@@ -211,19 +322,41 @@
 
   /** Rewrite a matching field's value inside a multipart/form-data body. */
   function rewriteMultipart(body, param, value, changes) {
-    const name = reEscape(param);
-    // name attr, then the rest of the disposition line, then any extra header
-    // lines (e.g. Content-Type), then the blank line, then the value up to the
-    // next boundary. Tolerates typed parts and extra disposition params.
-    const re = new RegExp(
-      `(name="${name}"[^\\r\\n]*(?:\\r?\\n[^\\r\\n]+)*\\r?\\n\\r?\\n)([\\s\\S]*?)(\\r?\\n--)`,
-      'gi',
-    );
-    return body.replace(re, (m, pre, val, post) => {
-      if (val === value) return m;
-      changes.push({ where: 'multipart', key: param, from: val, to: value });
-      return pre + value + post;
-    });
+    const first = /^--([^\r\n]+)\r?\n/.exec(body);
+    if (!first) return body;
+    const delimiter = `--${first[1]}`;
+    const marker = new RegExp('(?:^|\\r?\\n)' + reEscape(delimiter) + '(?=\\r?\\n|--(?:\\r?\\n|$))', 'g');
+    const offsets = [...body.matchAll(marker)].map((m) => m.index + m[0].length - delimiter.length);
+    if (offsets.length < 2) return body;
+    const parts = [body.slice(0, offsets[0])];
+    for (let i = 0; i < offsets.length; i++) {
+      parts.push(body.slice(offsets[i] + delimiter.length, offsets[i + 1] ?? body.length));
+    }
+    for (let i = 1; i < parts.length; i++) {
+      const part = parts[i];
+      if (/^--/.test(part)) continue;
+      const lead = part.startsWith('\r\n') ? 2 : part.startsWith('\n') ? 1 : 0;
+      const crlf = part.indexOf('\r\n\r\n', lead);
+      const lf = part.indexOf('\n\n', lead);
+      const sep = crlf >= 0 ? crlf : lf;
+      const sepLen = crlf >= 0 ? 4 : 2;
+      if (sep < 0) continue;
+      const head = part.slice(lead, sep);
+      const disposition = head.split(/\r?\n/).find((line) => /^content-disposition\s*:/i.test(line));
+      if (!disposition || /;\s*filename\*?\s*=/i.test(disposition)) continue;
+      const attrs = disposition.replace(/^content-disposition\s*:/i, '');
+      const match = /(?:^|;)\s*name\s*=\s*(?:"([^"]*)"|([^;\s]+))/i.exec(attrs);
+      const field = match && (match[1] ?? match[2]);
+      if (!field || !eqName(field, param)) continue;
+      const start = sep + sepLen;
+      const tail = part.endsWith('\r\n') ? 2 : part.endsWith('\n') ? 1 : 0;
+      const end = part.length - tail;
+      const from = part.slice(start, end);
+      if (from === value) continue;
+      changes.push({ where: 'multipart', key: field, from, to: value });
+      parts[i] = part.slice(0, start) + value + part.slice(end);
+    }
+    return parts.join(delimiter);
   }
 
   /**
@@ -239,16 +372,14 @@
     value = String(value);
     if (!param) return { url, body, changes };
 
-    try {
-      const u = new URL(url);
-      let touched = false;
-      const next = new URLSearchParams();
-      for (const [k, v] of u.searchParams) {
-        if (eqName(k, param) && v !== value) { changes.push({ where: 'query', key: k, from: v, to: value }); next.append(k, value); touched = true; }
-        else next.append(k, v);
-      }
-      if (touched) { u.search = next.toString(); url = u.href; }
-    } catch { /* leave url */ }
+    const hashAt = url.indexOf('#');
+    const searchEnd = hashAt < 0 ? url.length : hashAt;
+    const queryAt = url.indexOf('?');
+    if (queryAt >= 0 && queryAt < searchEnd) {
+      const query = url.slice(queryAt + 1, searchEnd);
+      const rewritten = rewriteUrlEncoded(query, param, value, changes, 'query');
+      if (rewritten !== query) url = url.slice(0, queryAt + 1) + rewritten + url.slice(searchEnd);
+    }
 
     const ct = (getHeader(headersToList(req.headers), 'content-type') || '').toLowerCase();
     const trimmed = body.trim();
@@ -271,10 +402,9 @@
     }
     function rewriteJsonBody() {
       try {
-        const obj = JSON.parse(body);
         const jc = [];
-        rewriteJson(obj, param, value, jc, '');
-        if (jc.length) { changes.push(...jc); body = JSON.stringify(obj); }
+        const rewritten = rewriteJsonText(body, param, value, jc);
+        if (jc.length) { changes.push(...jc); body = rewritten; }
       } catch { /* not valid JSON, leave it */ }
     }
     return { url, body, changes };
@@ -291,16 +421,64 @@
     return String(s || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
   }
 
+  /** One URL pattern per line. Lines may be plain text, shell-style globs, or /regex/flags. */
+  function splitPatterns(input) {
+    return String(input || '').split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !x.startsWith('#'));
+  }
+
+  function compileUrlPattern(pattern) {
+    const regex = /^\/(.*)\/([a-z]*)$/i.exec(pattern);
+    if (regex) {
+      try {
+        if (/[^imsu]/.test(regex[2])) throw new Error('Supported regex flags are i, m, s, and u.');
+        const compiled = new RegExp(regex[1], regex[2]);
+        return { valid: true, test: (url) => compiled.test(url) };
+      }
+      catch (error) { return { valid: false, error: error.message, test: () => false }; }
+    }
+    if (/[?*]/.test(pattern)) {
+      try {
+        const source = reEscape(pattern).replace(/\\\*/g, '.*').replace(/\\\?/g, '.');
+        const re = new RegExp('^' + source + '$', 'i');
+        return { valid: true, test: (url) => {
+          try {
+            const target = /^[a-z]+:\/\//i.test(pattern) ? url : url.replace(/^https?:\/\//i, '');
+            return re.test(target);
+          } catch { return false; }
+        } };
+      } catch (error) { return { valid: false, error: error.message, test: () => false }; }
+    }
+    const needle = pattern.toLowerCase();
+    return { valid: true, test: (url) => url.toLowerCase().includes(needle) };
+  }
+
+  /** Exclusions win. A blank include list means every HTTP(S) request. */
+  function urlInScope(url, include, exclude) {
+    if (!/^https?:/i.test(String(url || ''))) return { allowed: false, errors: [] };
+    const errors = [];
+    const build = (text, label) => splitPatterns(text).map((pattern) => {
+      const compiled = compileUrlPattern(pattern);
+      if (!compiled.valid) errors.push(`${label} “${pattern}”: ${compiled.error}`);
+      return compiled;
+    }).filter((item) => item.valid);
+    const includes = build(include, 'Include');
+    const excludes = build(exclude, 'Exclude');
+    const included = !splitPatterns(include).length || includes.some((item) => item.test(url));
+    const excluded = excludes.some((item) => item.test(url));
+    return { allowed: errors.length === 0 && included && !excluded, errors };
+  }
+
   /** Extract a text body from a CDP request object (Fetch/Network). */
   function requestBodyText(req) {
-    if (typeof req.postData === 'string') return { text: req.postData, known: true };
     if (req.postDataEntries && req.postDataEntries.length) {
       try {
+        const complete = req.postDataEntries.every((e) => typeof e.bytes === 'string');
         const bytes = concatBytes(req.postDataEntries.map((e) => (e.bytes ? b64ToBytes(e.bytes) : new Uint8Array())));
         const d = decodeBody(bytes);
-        return { text: d.binary ? '' : d.text, known: !d.binary };
+        return { text: d.binary ? '' : d.text, known: complete && !d.binary };
       } catch { return { text: '', known: false }; }
     }
+    if (typeof req.postData === 'string') return { text: req.postData, known: true };
     return { text: '', known: !req.hasPostData };
   }
 
@@ -339,8 +517,8 @@
   const api = {
     REASONS, norm, headersToList, getHeader, serializeRequest, parseRequest,
     serializeResponse, parseResponse, statusText, bytesToB64, b64ToBytes, utf8ToB64,
-    concatBytes, decodeBody, prettyBody, toCurl, applyParamRule, applyParamRules,
-    splitNames, DEFAULT_PARAMS, isStatic, requestBodyText,
+    concatBytes, decodeBody, formatJson, prettyBody, toCurl, applyParamRule, applyParamRules,
+    splitNames, splitPatterns, compileUrlPattern, urlInScope, DEFAULT_PARAMS, isStatic, requestBodyText,
   };
   global.HTTP = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

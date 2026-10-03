@@ -1,0 +1,52 @@
+.lab-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; min-height:0; }
+.lab-grid > .pane:not(.builder-form) { display:flex; flex-direction:column; min-width:0; }
+.builder-form { display:flex; flex-direction:column; overflow:auto; padding:18px; gap:10px; }
+.builder-form > * { flex-shrink:0; }
+.builder-form > label { display:block; }
+.builder-form select { max-width:280px; }
+.builder-form textarea { width:100%; }
+.builder-form > label, .workspace-card > label { color:var(--text-muted); font-size:12px; margin-top:8px; }
+.workspace-card .toolbar.small { padding:10px 0; border-bottom:0; background:transparent; }
+.workspace-card .toolbar.small select { width:auto; flex:1; }
+.workspace-card .toolbar.small { flex-wrap:wrap; }
+.builder-form input, .workspace-card input, .workspace-card select { width:100%; min-width:0; box-sizing:border-box; }
+.builder-form textarea { flex:none; min-height:96px; border:1px solid var(--border); border-radius:8px; }
+.builder-form label input { display:block; margin-top:7px; }
+.builder-form .lab-grid label { min-width:0; }
+.assertion-editor, .auth-comparison { border:1px solid var(--border); border-radius:10px; margin:0 0 12px; padding:10px 14px; flex-shrink:0; }
+summary { cursor:pointer; font-size:12px; font-weight:600; }
+.assertion-editor textarea { width:100%; min-height:90px; max-height:200px; margin-top:10px; box-sizing:border-box; font-family:var(--mono); }
+.assertion-editor p { margin:8px 0 0; }
+.assertion-results { display:flex; flex-wrap:wrap; gap:6px; padding:6px 0; max-height:130px; overflow:auto; }
+.assertion-result { font-size:11px; border:1px solid var(--border); padding:5px 8px; border-radius:6px; overflow-wrap:anywhere; }
+.assertion-result.pass { color:var(--green); } .assertion-result.fail { color:var(--red); }
+.findings-list { overflow:auto; display:flex; flex-direction:column; gap:10px; }
+.finding { border:1px solid var(--border); border-radius:12px; padding:16px; background:var(--panel); }
+.finding-title { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.finding h2 { margin:0; font-size:14px; } .finding p { font-size:12px; line-height:1.6; margin:8px 0; overflow-wrap:anywhere; }
+.finding code { display:block; white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; }
+.finding-tag { border-radius:5px; background:var(--bg); padding:4px 6px; font-size:10px; color:var(--text-muted); }
+.finding-tag.review { color:var(--orange); }
+.auth-comparison p { max-width:1000px; color:var(--text-muted); font-size:12px; line-height:1.6; }
+.compact { max-height:140px; min-height:25px; flex:none; padding:10px; }
+.workspace-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; overflow:auto; padding-bottom:14px; }
+.workspace-card { border:1px solid var(--border); border-radius:14px; padding:22px; background:var(--panel); }
+.workspace-card h2 { font-size:16px; margin:0 0 12px; }
+.workspace-card p { font-size:12px; line-height:1.7; color:var(--text-muted); }
+.workspace-card label { display:block; margin:12px 0 7px; }
+.workspace-counts { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:20px 0; }
+.workspace-counts span { display:block; padding:10px; border:1px solid var(--border); border-radius:8px; color:var(--text-muted); font-size:11px; }
+.workspace-counts b { display:block; color:var(--text); font-size:20px; margin-bottom:4px; }
+.environment-card { grid-column:1/-1; }
+.environment-card textarea { min-height:160px; width:100%; box-sizing:border-box; font-family:var(--mono); }
+#backupPreview { border-top:1px solid var(--border); margin-top:12px; padding-top:8px; }
+#wsTable td { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#wsTable tr { cursor:pointer; }
+@media(max-width:900px) { .lab-grid,.workspace-cards { grid-template-columns:minmax(0,1fr); } .lab-grid.grow { overflow:auto; } .lab-grid.grow > .pane { min-height:350px; } .workspace-card { padding:16px; } }
+.tabs { flex-wrap:wrap; }
+body { grid-template-columns:minmax(0,1fr); }
+main, .view { min-width:0; }
+.view { overflow:hidden; }
+.view > .table-wrap { min-width:0; width:100%; box-sizing:border-box; }
+.workflow-split > .table-wrap { min-width:0; }
+:root { --text-muted:var(--muted); --orange:var(--accent); }

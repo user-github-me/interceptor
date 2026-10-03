@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a useful improvement with a reviewable scope.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and pull requests first. Explain the user need and keep the initial scope concrete. Read CONTRIBUTING.md for the issue-to-PR workflow.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Who needs this, and what task is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and scope
+      description: Describe how it should work, including any active requests, local storage, or permission needs.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable outcomes that a reviewer can check.
+      placeholder: "- A user can…\n- The result is saved…\n- Errors show…"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and context
+      description: Existing workarounds, related issues, and examples with synthetic or redacted data.
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution interest
+      options:
+        - I am proposing the idea
+        - I can help test or document it
+        - I would like to implement it after discussing the scope

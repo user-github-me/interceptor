@@ -27,9 +27,22 @@ Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, 
 ## Features
 
 - 🧲 **Intercept** — pause requests (and responses) and edit the raw method, path, query, headers or body before they continue. Forward, drop, or forward-and-catch-the-response.
-- 📜 **HTTP History** — a live table of every request from the target tab, with full headers (including `Cookie`/`Set-Cookie`), bodies, timing and size. Filter by text/regex, pretty-print JSON, copy as cURL, export **HAR**.
+- 📜 **HTTP History** — a live table of every request from the target tab, with full headers (including `Cookie`/`Set-Cookie`), bodies, timing and size. Search URLs, headers, and bodies; filter by method/status/type; import or export **HAR**.
 - 🔁 **Repeater** — hand-craft a raw request and fire it as many times as you like. What you type is exactly what goes on the wire — including `Cookie`, `Origin`, `User-Agent` and `Sec-*` headers.
-- ⚡ **Auto mode** — force one or more fields to a fixed value on **every** request, automatically. Purpose-built for **price-tampering / server-validation tests**. Toggle it for **this tab** or **all tabs** from the toolbar popup — no manual attach step.
+- 📥 **cURL import** — paste a command from DevTools to create an editable Repeater request. Nothing executes or sends during import.
+- 🗂️ **Collections & variables** — organize named requests in folders with notes. Reuse `{{host}}`, `{{baseUrl}}`, or your own variables across Repeater and Runner. Import/export portable collections; work is saved locally automatically.
+- 🧪 **Runner** — replace a value with `{{payload}}`, try up to 50 values sequentially, and inspect status, timing, size, and response-text checks. Cancel a run, export CSV, or compare results.
+- 🗺️ **Site Map** — group captured requests into endpoints by origin, method, and path. See call counts, statuses, timing, and query field names; jump back to History or replay an endpoint.
+- 🔎 **Inspector** — read query/form fields, nested JSON values, request cookies, response headers, and `Set-Cookie` attributes. Send any field to Decoder.
+- ⚡ **Auto mode** — force one or more fields to a fixed value automatically. Limit changes with URL include/exclude patterns, then run against **this tab** or **all tabs** from the toolbar popup.
+- ⚖️ **Comparer** — send responses from History or Repeater into a side-by-side line diff, with optional JSON normalization and a copyable unified diff.
+- 🔓 **Decoder** — JSON, URL, Base64, hex, HTML entities, JWT inspection, and SHA-256/SHA-512 hashes, all locally.
+- 🧰 **API Builder** — Postman-style HTTP requests with JSON/form/raw bodies, Bearer/Basic/API key auth, variables, response tests, and saved collections.
+- ✅ **Response assertions** — check status, headers, JSON Pointer values, response text, time, and size in Builder, Repeater, and Runner. No test scripts execute.
+- 🛡️ **Security Review** — passive checks of captured headers, cookies, CORS, caching, transport, URL credentials, and debug errors; manual credential comparison and reports.
+- ⇌ **WebSockets** — observe sent/received text and binary frame previews from the attached tab, filter, decode, and export.
+- 💾 **Workspace** — automatic saving on your PC, named environments, full backup/import with restore preview and undo, and optional password encryption.
+- 🕘 **Response snapshots** — Repeater retains the last five responses for each tab and compares successive sends. Set a request timeout and duplicate requests with one click.
 - 🧩 Works in **Brave, Chrome and Edge**. Pure JavaScript, **no build step**, no dependencies, no data leaves your machine.
 
 ## Screenshots
@@ -43,11 +56,23 @@ Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, 
     <td width="50%"><img src="docs/screenshots/history.png" alt="HTTP history"><br><sub><b>HTTP History</b> — full request/response, copy as cURL, export HAR.</sub></td>
     <td width="50%"><img src="docs/screenshots/repeater.png" alt="Repeater"><br><sub><b>Repeater</b> — edit a raw request and replay it.</sub></td>
   </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/comparer.png" alt="Response comparison"><br><sub><b>Comparer</b> — spot the changed fields.</sub></td>
+    <td width="50%"><img src="docs/screenshots/decoder.png" alt="Local decoder"><br><sub><b>Decoder</b> — inspect and transform encoded values.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/runner.png" alt="Payload runner"><br><sub><b>Runner</b> — repeat validation tests with different values.</sub></td>
+    <td width="50%"><img src="docs/screenshots/collections.png" alt="Request collections"><br><sub><b>Collections</b> — organize requests and reusable variables.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/sitemap.png" alt="Captured endpoint map"><br><sub><b>Site Map</b> — understand the API your app uses.</sub></td>
+    <td width="50%"><img src="docs/screenshots/inspector.png" alt="Request field inspector"><br><sub><b>Inspector</b> — read fields and cookie attributes.</sub></td>
+  </tr>
 </table>
 
 ## Install (from source)
 
-There's no store listing yet — load it unpacked in about a minute:
+Install [Interceptor from the Chrome Web Store](https://chromewebstore.google.com/detail/jlckafabkmodidmgpkghjihifieibfgg), or load the source unpacked in about a minute:
 
 1. **Download** this repo (`git clone` or *Code → Download ZIP* and extract).
 2. Open your browser's extensions page:
@@ -59,7 +84,7 @@ There's no store listing yet — load it unpacked in about a minute:
 5. Pin **Interceptor** to the toolbar. Done.
 
 ```bash
-git clone https://github.com/<your-username>/interceptor.git
+git clone https://github.com/user-github-me/interceptor.git
 # then "Load unpacked" → select the interceptor/ folder
 ```
 
@@ -68,19 +93,86 @@ git clone https://github.com/<your-username>/interceptor.git
 ### Test a payment flow in 15 seconds (Auto mode)
 
 1. Click the **Interceptor** toolbar icon.
-2. Choose **All tabs** (or **This tab**). The default rule already forces the common payment fields to `1`.
-3. Use your app's checkout. Every `amount`, `payableAmount`, `totalAmount`, … goes out as `1`.
-4. Check your server: did it re-price server-side, or did it trust the client? If the order total drops, your validation is bypassable.
+2. Under **URL safety scope**, add your local or staging URL, such as `localhost:*/*` or `*.staging.example.com/api/*`.
+3. Choose **All tabs** (or **This tab**). The default rule already forces common payment fields to `1`.
+4. Use your app's checkout. Every in-scope `amount`, `payableAmount`, `totalAmount`, … goes out as `1`.
+5. Check your server: did it re-price server-side, or did it trust the client? If the order total drops, your validation is bypassable.
 
-Every rewrite is recorded in the panel's **Auto log** and **HTTP History**, so you always have a record of what changed.
+Open the panel to see rewrites in the **Auto log**. Attach to the app's tab to also record its full **HTTP History**.
 
 ### Inspect & tamper by hand (Intercept)
 
-1. Open the panel (**Open panel →** in the popup) and pick your app's tab under **Target tab**, then **Attach**. Your browser shows an *"Interceptor started debugging this browser"* banner — that's expected; it's how the extension gets low-level access.
+1. Click **Open workbench →** in the popup and pick your app's tab under **Target tab**, then **Attach**. Your browser shows an *"Interceptor started debugging this browser"* banner — that's expected; it's how the extension gets low-level access.
 2. Click **Intercept is OFF** to turn it **ON**.
 3. Use your app. Requests pause in the queue — edit anything and **Forward** (⌘/Ctrl+Enter), or **Drop** them.
 
 ## How it works
+
+### Reusable validation tests
+
+1. Send a captured request to **Repeater**, or use **Import cURL** to bring one in from DevTools.
+2. Save it to **Collections** and add a name, folder, and reproduction notes.
+3. Set workspace variables as `name=value`, one per line. For example, `host=localhost:3000` can be used as `Host: {{host}}` in a saved request.
+4. Click **Send to Runner**. Replace the value you want to vary with `{{payload}}`, then put one value on each line in **Payloads**. Values are inserted literally; include quotes for JSON strings or URL encoding for query values.
+5. Set the delay and timeout, then **Start run**. Each result can be opened in Repeater or compared with the first result. Starting the run sends all listed requests to the chosen target.
+
+Runner uses one origin per run, sends one request at a time, and follows no redirects. It checks literal response text when you supply an expected value. **Stop** cancels the current request and remaining payloads. Missing variables block sending. Collections exports include request text but omit workspace variables; raw requests may still include credentials you pasted.
+
+Use **Command+K** on macOS or **Ctrl+K** on Windows/Linux to jump to any workbench tool. Shortcut hints and button tooltips follow your system automatically.
+
+### API requests, tests, and local backups
+
+<table>
+  <tr><td width="50%"><img src="docs/screenshots/builder.png" alt="API Builder with request authentication and passing assertions"><br><sub><b>API Builder</b> — requests, authentication, and response tests.</sub></td><td width="50%"><img src="docs/screenshots/security.png" alt="Security Review of captured HTTP traffic"><br><sub><b>Security Review</b> — contextual observations and credential comparisons.</sub></td></tr>
+  <tr><td width="50%"><img src="docs/screenshots/workspace.png" alt="Local workspace backup and environments"><br><sub><b>Workspace</b> — local persistence, environments, encrypted backup and restore.</sub></td><td width="50%"><img src="docs/screenshots/websocket.png" alt="Captured sent and received WebSocket frames"><br><sub><b>WebSockets</b> — sent and received messages from the attached tab.</sub></td></tr>
+</table>
+
+1. In **Workspace**, create an environment (such as Local or Staging) with `baseUrl` and `token` variables. Environment values override the shared values in Collections.
+2. In **API Builder**, select a method, enter `{{baseUrl}}/api/health`, choose authentication, and add headers or a JSON/form body. Click **Send request** to send it, or **Save request** to keep it in Collections.
+3. Add response assertions in Builder, Repeater, or Runner:
+
+```json
+[
+  { "type": "status", "equals": 200 },
+  { "type": "header", "name": "Content-Type", "contains": "application/json" },
+  { "type": "json", "path": "/data/active", "equals": true },
+  { "type": "time", "max": 1000 }
+]
+```
+
+JSON paths use JSON Pointer (`/items/0/id`, `~1` for `/`, `~0` for `~`). Headers
+support `equals`, `contains`, or `absent: true`; JSON fields support `equals` or
+`absent: true`. Other checks: `bodyContains` with `value`, and `size` with `max`
+bytes. JSON assertions use JavaScript number precision; inspect exact large
+numeric tokens in Inspector or use literal body text checks. Failed network sends
+fail every assertion. Truncated responses are labeled as capped previews.
+
+**Collections → Import collection** accepts Interceptor JSON and Postman v2-style
+collections, including nested folders, variables, raw/form bodies, and bearer
+auth. Postman variables become an environment. Unsupported auth/body modes are
+reported; file uploads and pre-request/test scripts are not imported or executed.
+Ordinary collection exports omit variables; full workspace backups include them.
+
+**Security Review → Review HTTP History** sends no traffic. Its observations are
+context for testing, not confirmed vulnerabilities. Credential comparison sends
+two GET/HEAD/OPTIONS requests to one origin with redirects off; it strips only
+credential headers, keeping query/body values. Successful anonymous responses
+may be intentional. **WebSockets** records frames while Intercept has a tab
+attached; it does not pause or inject messages.
+
+All workbench data saves automatically in the current browser profile’s local
+database, within the documented preview limits. Outgoing Builder, Repeater,
+Runner and credential-comparison requests also appear in **HTTP History**.
+**Workspace → Download full
+backup** exports history, snapshots, collections, environments, results, tool
+drafts, security observations, and frames. Set a password of at least eight
+characters to encrypt it. To restore, enter the same password, choose **Import
+backup**, review the counts, then choose **Replace workspace**. Detach and finish
+active requests first. Restore sends no requests, leaves Auto mode off, and keeps
+a local undo copy. Backups can contain credentials; downloaded files remain after
+uninstalling. Storage belongs to this browser profile, not a cloud account.
+
+## Architecture
 
 Interceptor is built on the **Chrome DevTools Protocol (CDP)** via the `chrome.debugger` API — the only way an extension can genuinely pause and mutate live traffic (the `webRequest` API can observe and block, but not rewrite bodies or edit responses).
 
@@ -89,7 +181,8 @@ Interceptor is built on the **Chrome DevTools Protocol (CDP)** via the `chrome.d
 │  Toolbar popup (popup.js)  │        │  Dashboard page (dashboard.js)│
 │  • Auto mode on/off        │        │  • Intercept queue + editor   │
 │  • scope: this tab / all   │        │  • HTTP history + HAR         │
-│  • field → value rules     │        │  • Repeater                   │
+│  • field → value rules     │        │  • Repeater + HAR import      │
+│  • URL safety scope        │        │  • Comparer + Decoder         │
 └─────────────┬─────────────┘        └───────────────┬──────────────┘
               │ chrome.storage                        │ CDP: Fetch + Network
               ▼                                        ▼  (its own debuggee)
@@ -125,38 +218,69 @@ Each rule is a list of **field names** (comma-separated) plus one **value**. A f
 
 Matching is **case-insensitive on the whole field name** (`AmountToPay` matches `amountToPay`), a field you didn't list (like `quantity`) is left untouched, and JSON types are preserved (a numeric field stays a number). The default rule covers the usual suspects: `amount, payableAmount, payingAmount, amountToPay, paymentAmount, totalAmount, grandTotal, orderTotal, subtotal, price, unitPrice, amountDue, netAmount, finalAmount, chargeAmount, billAmount, totalPrice, payment` — add your app's own field names in the popup.
 
+Use **URL safety scope** to constrain those rules. Each line can be plain text, a glob such as `*.example.test/api/*`, or a regular expression such as `/^https:\/\/api\.example\.test\//i`. Globs match the whole URL, or the host and path when you omit the scheme. Plain text matches anywhere in the URL. Regex flags `i`, `m`, `s`, and `u` are supported. A blank include list allows all HTTP(S) URLs; exclusions always win. Invalid patterns pause automatic rewriting until fixed. Tab-only targets live in session storage, so a browser restart cannot accidentally reuse an old tab ID.
+
 ## Permissions
 
 | Permission | Why |
 |---|---|
 | `debugger` | The core: pause, edit, forward and drop live requests/responses via CDP. |
 | `tabs` | List tabs to target and coordinate attach/detach. |
-| `storage` | Remember your rules, settings and Repeater tabs. |
+| `storage` | Save local settings/rules and session coordination; the complete workspace is saved locally in IndexedDB. |
 | `webRequest` | Show the *"Actual request sent"* view in Repeater. |
 | `declarativeNetRequestWithHostAccess` | Let Repeater send otherwise-forbidden headers (`Cookie`, `Origin`, `User-Agent`, …) exactly as typed. |
+| `clipboardWrite` | Copy raw messages, cURL commands, decoded output, and diffs when you click a copy button. |
 | `<all_urls>` | You decide which of *your* sites to test; traffic never leaves your machine. |
 
-Nothing is sent anywhere. There are no analytics, no network calls of the extension's own — everything runs locally.
+There are no analytics or telemetry. Traffic is processed locally; Repeater sends requests only to the target you choose.
 
 ## Limitations
 
 - One **manually-attached** tab at a time for the deep intercept/history/repeater workflow (Auto mode can cover all tabs).
-- WebSockets and Server-Sent Events aren't intercepted.
-- Bodies are edited as UTF-8 text; for binary bodies (file uploads) leave the body untouched and the original bytes are sent.
+- WebSocket frames can be inspected but are not paused/modified. Server-Sent Events are not intercepted as individual events.
+- Bodies are edited as UTF-8 text; binary and oversized bodies are passed through unchanged. History keeps up to 2,500 entries, 750,000 characters per body, and a 64-million-character total text budget. Repeater previews up to 4 MB per response.
+- Workspaces save automatically in the browser profile on your PC. Repeater supports 100 tabs; Collections 100 requests; environments 50; WebSockets 1,000 capped frames. Browser disk quotas still apply; the UI reports save failures and offers backup download.
+- Runner is limited to 50 payloads and keeps capped response previews. Site Map and passive Security Review cover recorded/imported traffic; they do not crawl sites or prove vulnerabilities automatically.
+- cURL import supports literal URLs, method, headers, body, cookies, Basic auth, and redirects. Unsupported options and file uploads are rejected instead of silently omitted.
 - Browsers can't send a body with `GET`/`HEAD`, so Repeater can't either.
 - Traffic from other-process iframes and some service workers may not be captured.
 - For a self-signed HTTPS dev cert, open the URL in a tab and accept it once before using Repeater.
 
 ## Development & tests
 
-Pure JS, no build. The request/response engine in `http.js` is covered by Node unit tests, and the extension is verified end-to-end by driving a real Brave instance over CDP (intercept edit/drop, response tampering, history capture, repeater header handling, and Auto mode across query/JSON/form/multipart and both scopes).
+Pure JS, no build and no runtime dependencies. Run the tracked Node test suite and syntax checks with:
+
+```bash
+npm test
+npm run check
+```
+
+The browser integration check uses a local echo server and an isolated Chromium
+profile with the unpacked extension loaded and remote debugging enabled:
+
+```bash
+node tests/browser-integration.mjs http://127.0.0.1:9226
+```
+
+It checks debugger attachment, request/response edits, Auto scope and worker
+handoff, Repeater headers and rule cleanup, response limits, HAR import,
+Inspector, Site Map, variables, Runner cancellation, snapshots, Builder authentication
+and assertions, credential comparisons, live WebSocket frames, encrypted full
+backups, restoration without traffic, and local persistence across reloads.
 
 ```
 manifest.json      MV3 manifest
 background.js      service worker — Auto mode engine + tab coordination
 popup.html/.js/.css  toolbar popup — Auto mode scopes & rules
-dashboard.html/.js/.css  the panel — intercept, history, repeater
+dashboard.html/.js/.css  the panel — intercept, history, repeater, comparer, decoder
 http.js            dependency-free HTTP + rewrite engine (unit-tested)
+workbench.js       HAR import, comparer, and decoder helpers
+workflow.js        cURL import, variables, endpoint mapping, and inspection helpers
+workflow-ui.js/.css collections, Inspector, Site Map, Runner, and tool switcher
+lab.js             assertions, passive review, Postman import, backup validation/encryption
+lab-ui.js/.css      API Builder, Security Review, WebSockets, environments, backup UI
+local-store.js     IndexedDB storage for complete local workspaces
+tests/             Node tests for parsing, rewriting, scope, HAR, diff, and codecs
 icons/             extension icons
 docs/screenshots/  images used in this README
 ```
@@ -167,7 +291,9 @@ This is a tool for testing **your own** applications, or ones you have **explici
 
 ## Contributing
 
-Issues and PRs are welcome — bug reports, new default field names, and UI polish especially. Keep it dependency-free and match the existing style. If you change the rewrite engine, add a unit test in the same spirit as the existing ones.
+Start with a [bug report or feature issue](https://github.com/user-github-me/interceptor/issues), agree on a focused scope, and implement it on a feature branch. Open a linked PR for review. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, templates, browser verification, and design constraints. GitHub Actions runs the syntax and regression checks on PRs.
+
+The current v1.1 upgrade is tracked in [issues #2–#9](https://github.com/user-github-me/interceptor/issues?q=is%3Aissue%20is%3Aopen) and [PR #1](https://github.com/user-github-me/interceptor/pull/1). These issues remain open until merge; use separate issues for follow-up contributions.
 
 ## License
 

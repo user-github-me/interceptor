@@ -1,11 +1,46 @@
 'use strict';
-/* global HTTP */
+/* global HTTP, Workbench, Workflow, Lab, workflowState, bindWorkflow, renderSiteMap, renderCollections, renderInspector, renderRunner, workspaceVariableText, labState, bindLab, queueLocalSave, renderAssertionResults, renderSecurity, renderWorkspace, renderWebSockets, captureWebSocket */
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-const MAX_HISTORY = 5000;
-const MAX_BODY_CHARS = 2_000_000;       // bodies stored in history
+function applyShortcutHints(platform) {
+  const mac = /^mac(?:os|intel|intosh)?$/i.test(String(platform || ''));
+  const modifier = mac ? '⌘' : 'Ctrl';
+  const spokenModifier = mac ? 'Command' : 'Control';
+  const ariaModifier = mac ? 'Meta' : 'Control';
+  for (const hint of $$('[data-shortcut]')) {
+    hint.textContent = `${modifier} + ${hint.dataset.shortcut}`;
+    hint.setAttribute('aria-label', `${spokenModifier} + ${hint.dataset.shortcut}`);
+  }
+  for (const button of $$('[data-shortcut-title]')) {
+    button.title = `${modifier} + ${button.dataset.shortcutTitle}`;
+    button.setAttribute('aria-keyshortcuts', `${ariaModifier}+${button.dataset.shortcutTitle}`);
+  }
+}
+
+async function configureShortcutHints() {
+  const fallback = navigator.userAgentData?.platform || navigator.platform || '';
+  applyShortcutHints(fallback);
+  try { applyShortcutHints((await chrome.runtime.getPlatformInfo()).os); }
+  catch { /* the local platform fallback remains visible */ }
+}
+const shortcutHintsReady = configureShortcutHints();
+
+let dashboardPort;
+let closingDashboard = false;
+function connectDashboard() {
+  dashboardPort = chrome.runtime.connect({ name: 'dashboard' });
+  dashboardPort.onDisconnect.addListener(() => {
+    if (!closingDashboard) setTimeout(connectDashboard, 250);
+  });
+}
+connectDashboard();
+
+const MAX_HISTORY = 2500;
+const MAX_BODY_CHARS = 750_000;         // characters kept per captured body
+const MAX_HISTORY_CHARS = 64_000_000;   // approximate total text budget
+const MAX_REPEATER_BYTES = 4_000_000;
 const MAX_DISPLAY_CHARS = 1_000_000;    // bodies rendered in <pre>
 const STATIC_TYPES = new Set(['Image', 'Font', 'Stylesheet', 'Media']);
 const STATIC_EXT = /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp|css|woff2?|ttf|otf|eot|mp4|webm|mp3|wav|ogg|map)$/i;
@@ -16,8 +51,10 @@ const state = {
   attached: false,
   settings: {
     requests: true, responses: false, skipStatic: true, filter: '',
-    disableCache: false, historyHideStatic: false, prettyJson: true, repPretty: true,
+    disableCache: false, historyHideStatic: false, historySearchContent: true,
+    prettyJson: true, repPretty: true, repRemember: true, comparePretty: true,
     autoMode: false, autoRules: [{ param: HTTP.DEFAULT_PARAMS, value: '1' }],
+    autoInclude: '', autoExclude: '',
   },
   interceptOn: false,
   queue: [],                 // paused Fetch items
@@ -31,6 +68,7 @@ const state = {
   repeaters: [],
   activeRepeaterId: null,
   repSeq: 0,
+  compare: { left: '', right: '', leftLabel: '', rightLabel: '', unified: '' },
 };
 
 // ======================================================================
@@ -55,6 +93,35 @@ function fmtSize(n) {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 const fmtMs = (ms) => (ms == null ? '' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`);
+
+function limitBody(text, label = 'body') {
+  text = String(text || '');
+  if (text.length <= MAX_BODY_CHARS) return text;
+  return text.slice(0, MAX_BODY_CHARS) + `\n[… ${label} truncated; ${fmtSize(text.length)} total]`;
+}
+
+function entryChars(entry) {
+  const headers = [...(entry.reqHeaders || []), ...(entry.resHeaders || [])]
+    .reduce((n, h) => n + String(h.name).length + String(h.value).length, 0);
+  return headers + String(entry.url || '').length + String(entry.reqBody || '').length + String(entry.resBody || '').length;
+}
+
+function pruneHistory() {
+  let total = 0;
+  let keepFrom = state.history.length;
+  for (let i = state.history.length - 1; i >= 0; i--) {
+    total += entryChars(state.history[i]);
+    if (total > MAX_HISTORY_CHARS || state.history.length - i > MAX_HISTORY) break;
+    keepFrom = i;
+  }
+  if (keepFrom > 0) {
+    const removed = state.history.splice(0, keepFrom);
+    for (const entry of removed) {
+      if (netMap.get(entry.requestId) === entry) netMap.delete(entry.requestId);
+    }
+    if (removed.some((e) => e.id === state.selectedHistoryId)) state.selectedHistoryId = null;
+  }
+}
 
 async function copyText(text, what = 'Copied') {
   try {
@@ -86,7 +153,7 @@ function compileMatcher(str) {
   const m = /^\/(.+)\/([gimsuy]*)$/.exec(s);
   if (m) {
     try {
-      const re = new RegExp(m[1], m[2].replace('g', ''));
+      const re = new RegExp(m[1], m[2].replace(/[gy]/g, ''));
       return { test: (v) => re.test(v), valid: true };
     } catch { /* fall through to substring */ }
     return { test: (v) => v.toLowerCase().includes(s.toLowerCase()), valid: false };
@@ -124,7 +191,7 @@ function requestBodyFromCdp(req) {
     const bytes = HTTP.concatBytes(req.postDataEntries.map((e) => (e.bytes ? HTTP.b64ToBytes(e.bytes) : new Uint8Array())));
     const d = HTTP.decodeBody(bytes);
     if (d.binary) return { text: '', known: false, binary: true, size: d.size };
-    return { text: d.text, known: complete, binary: false };
+    return { text: complete ? d.text : '', known: complete, binary: false };
   }
   if (typeof req.postData === 'string') return { text: req.postData, known: true, binary: false };
   return { text: '', known: !req.hasPostData, binary: false };
@@ -143,20 +210,29 @@ function normalizeSettings(s) {
       : [{ param: HTTP.DEFAULT_PARAMS, value: '1' }];
   }
   if (s.autoScope !== 'tab' && s.autoScope !== 'all') s.autoScope = 'all';
-  if (typeof s.autoTabId !== 'number') s.autoTabId = null;
+  s.autoInclude = String(s.autoInclude || '');
+  s.autoExclude = String(s.autoExclude || '');
   delete s.autoParam;
   delete s.autoValue;
 }
 
 async function loadSettings() {
   try {
-    const { settings } = await chrome.storage.local.get('settings');
+    const [{ settings }, session] = await Promise.all([
+      chrome.storage.local.get('settings'),
+      chrome.storage.session.get('autoTabId'),
+    ]);
     normalizeSettings(settings);
     Object.assign(state.settings, settings || {});
+    state.settings.autoTabId = typeof session.autoTabId === 'number' ? session.autoTabId : null;
+    if (state.settings.autoScope === 'tab' && state.settings.autoTabId == null) state.settings.autoMode = false;
   } catch { /* defaults */ }
 }
 function saveSettings() {
-  chrome.storage.local.set({ settings: state.settings }).catch(() => {});
+  queueLocalSave();
+  const settings = { ...state.settings };
+  delete settings.autoTabId;
+  chrome.storage.local.set({ settings }).catch(() => {});
 }
 
 // ======================================================================
@@ -310,7 +386,7 @@ function updateStatus() {
   }
 
   // Publish attach state so the popup can show it.
-  chrome.storage.local.set({ attachedTabId: state.attached, attachedHost: state.attachedHost || '' }).catch(() => {});
+  chrome.storage.session.set({ attachedTabId: state.attached, attachedHost: state.attachedHost || '' }).catch(() => {});
 }
 
 /** Enable/disable Fetch interception according to the current settings.
@@ -343,6 +419,10 @@ async function applyFetchNow() {
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (!state.attached || source.tabId !== state.tabId || source.sessionId) return;
   switch (method) {
+    case 'Network.webSocketCreated':
+    case 'Network.webSocketClosed':
+    case 'Network.webSocketFrameSent':
+    case 'Network.webSocketFrameReceived': captureWebSocket(method, params); break;
     case 'Fetch.requestPaused': onRequestPaused(params); break;
     case 'Network.requestWillBeSent': onRequestWillBeSent(params); break;
     case 'Network.requestWillBeSentExtraInfo': onRequestExtra(params); break;
@@ -371,7 +451,10 @@ function continuePlain(requestId) {
 }
 
 const autoNames = () => (state.settings.autoRules || []).flatMap((r) => HTTP.splitNames(r.param));
-const autoModeOn = () => !!(state.settings.autoMode && autoNames().length);
+const autoModeOn = () => !!(
+  state.settings.autoMode && autoNames().length &&
+  !HTTP.urlInScope('https://interceptor.invalid/', state.settings.autoInclude, state.settings.autoExclude).errors.length
+);
 // Whether Auto mode applies to the tab THIS dashboard is attached to.
 function autoActive() {
   if (!autoModeOn()) return false;
@@ -380,7 +463,7 @@ function autoActive() {
 }
 function autoInScope(url, type) {
   if (/^(data|blob|chrome-extension|about):/i.test(url)) return false;
-  return !isStatic(type, url);
+  return !isStatic(type, url) && HTTP.urlInScope(url, state.settings.autoInclude, state.settings.autoExclude).allowed;
 }
 function autoRuleSummary() {
   const parts = (state.settings.autoRules || []).map((r) => {
@@ -389,7 +472,12 @@ function autoRuleSummary() {
     const shown = names.length <= 3 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
     return `${shown} → ${r.value}`;
   }).filter(Boolean);
-  return `forcing ${parts.join('  ;  ') || '(nothing)'}`;
+  const includeCount = HTTP.splitPatterns(state.settings.autoInclude).length;
+  const excludeCount = HTTP.splitPatterns(state.settings.autoExclude).length;
+  const scope = includeCount || excludeCount
+    ? ` · URL scope ${includeCount || 'all'} include / ${excludeCount} exclude`
+    : '';
+  return `forcing ${parts.join('  ;  ') || '(nothing)'}${scope}`;
 }
 
 async function onRequestPaused(p) {
@@ -409,10 +497,11 @@ async function onRequestPaused(p) {
 
   // Auto mode: rewrite the configured parameter on requests.
   let mod = null;
-  const reqBody = !isResponse ? requestBodyFromCdp(req) : null;
+  const reqBody = requestBodyFromCdp(req);
+  const reqBodyTooLarge = reqBody.text.length > MAX_BODY_CHARS;
   if (!isResponse && autoActive() && autoInScope(req.url, p.resourceType)) {
     try {
-      const textBody = reqBody.binary || !reqBody.known ? '' : reqBody.text;
+      const textBody = reqBody.binary || !reqBody.known || reqBodyTooLarge ? '' : reqBody.text;
       const m = HTTP.applyParamRules(
         { method: req.method, url: req.url, headers: req.headers, body: textBody },
         state.settings.autoRules,
@@ -439,16 +528,27 @@ async function onRequestPaused(p) {
     warn: '',
     autoNote: '',
   };
-  item.requestRaw = HTTP.serializeRequest({ method: req.method, url: req.url, headers: req.headers, body: (reqBody && reqBody.text) || '' });
+  const historyRequest = isResponse ? netMap.get(p.networkId) : null;
+  const editableBody = reqBody.known && !reqBody.binary && !reqBodyTooLarge && reqBody.text
+    ? reqBody.text
+    : isResponse && historyRequest && !/^\[binary request body/.test(historyRequest.reqBody || '') && !/\[… request body truncated/.test(historyRequest.reqBody || '')
+      ? historyRequest.reqBody : '';
+  item.requestRaw = HTTP.serializeRequest({
+    method: req.method,
+    url: req.url,
+    headers: historyRequest ? historyRequest.reqHeaders : req.headers,
+    body: editableBody || '',
+  });
 
   if (!isResponse) {
-    item.originalBody = reqBody.text;
+    item.originalBody = editableBody;
     if (reqBody.binary) item.warn = `Request body is binary (${fmtSize(reqBody.size)}) and is not shown. Leave the body empty to send the original bytes unchanged.`;
+    else if (reqBodyTooLarge) item.warn = `Request body exceeds ${fmtSize(MAX_BODY_CHARS)} and is not shown. Leave the body empty to send the original bytes unchanged.`;
     else if (!reqBody.known) item.warn = 'Request body is not fully available (large upload / file). Leave the body empty to send the original body unchanged.';
     item.originalRaw = item.requestRaw;
     // Pre-fill the auto-rewrite so the paused request already shows the tampered value.
     if (mod) {
-      item.autoRaw = HTTP.serializeRequest({ method: req.method, url: mod.url, headers: req.headers, body: reqBody.binary || !reqBody.known ? '' : mod.body });
+      item.autoRaw = HTTP.serializeRequest({ method: req.method, url: mod.url, headers: req.headers, body: reqBody.binary || !reqBody.known || reqBodyTooLarge ? '' : mod.body });
       item.autoNote = `Auto mode pre-applied: ${describeChanges(mod.changes)}`;
     }
   } else {
@@ -457,6 +557,10 @@ async function onRequestPaused(p) {
     item.originalBodyB64 = null;
     try {
       const r = await cdp('Fetch.getResponseBody', { requestId: p.requestId });
+      if (r.body.length > MAX_BODY_CHARS * (r.base64Encoded ? 4 / 3 : 1)) {
+        toast('Oversized response passed through unchanged.');
+        return continuePlain(p.requestId);
+      }
       if (r.base64Encoded) {
         item.originalBodyB64 = r.body;
         const d = HTTP.decodeBody(HTTP.b64ToBytes(r.body));
@@ -493,7 +597,7 @@ function describeChanges(changes) {
 async function autoForward(p, req, reqBody, mod) {
   const headers = HTTP.headersToList(req.headers).filter((h) => h.name.toLowerCase() !== 'content-length');
   const params = { requestId: p.requestId, url: mod.url, method: req.method, headers };
-  const canBody = reqBody && !reqBody.binary && reqBody.known;
+  const canBody = reqBody && !reqBody.binary && reqBody.known && reqBody.text.length <= MAX_BODY_CHARS;
   const bodyChanged = canBody && HTTP.norm(mod.body) !== HTTP.norm(reqBody.text);
   if (bodyChanged) params.postData = HTTP.utf8ToB64(mod.body);
   try {
@@ -507,7 +611,11 @@ async function autoForward(p, req, reqBody, mod) {
 
 /** Log an auto-rewrite and mark the matching history row edited. */
 function recordAuto(p, req, mod, bodyChanged) {
+  queueLocalSave();
   state.autoCount++;
+  chrome.runtime.sendMessage({ type: 'incrementAutoCount' }).then((result) => {
+    if (typeof result?.count === 'number') { state.autoCount = result.count; updateStatus(); renderAutoLog(); }
+  }).catch(() => {});
   const entry = {
     id: ++state.seq,
     method: req.method,
@@ -532,7 +640,8 @@ function recordAuto(p, req, mod, bodyChanged) {
 
 /** Record an auto-rewrite that the background worker made on another tab. */
 function recordAutoExternal(entry) {
-  state.autoCount++;
+  queueLocalSave();
+  state.autoCount = typeof entry.count === 'number' ? entry.count : state.autoCount + 1;
   state.autoLog.unshift({
     id: ++state.seq,
     method: entry.method,
@@ -595,9 +704,9 @@ function renderQueue() {
   // The toolbar badge is owned by the background worker (Auto-mode "ON").
 
   const cur = currentItem();
-  $('#fwdBtn').disabled = !cur;
-  $('#dropBtn').disabled = !cur;
-  $('#fwdRespBtn').disabled = !cur || cur.stage !== 'request';
+  $('#fwdBtn').disabled = !cur || !!cur.busy;
+  $('#dropBtn').disabled = !cur || !!cur.busy;
+  $('#fwdRespBtn').disabled = !cur || !!cur.busy || cur.stage !== 'request';
   $('#toRepeaterFromIntercept').disabled = !cur;
   $('#fwdAllBtn').disabled = n === 0;
 }
@@ -690,6 +799,7 @@ function removeFromQueue(id) {
 }
 
 async function forwardItem(item, catchResponse = false) {
+  if (item.busy) return false;
   let rel;
   try {
     rel = buildRelease(item, catchResponse);
@@ -697,21 +807,31 @@ async function forwardItem(item, catchResponse = false) {
     toast(`Can't forward: ${e.message}`, 'error');
     return false;
   }
-  removeFromQueue(item.id);
   if (catchResponse) state.forceResponse.add(item.id);
+  item.busy = true;
+  renderQueue();
   try {
     await cdp(rel.method, rel.params);
+    removeFromQueue(item.id);
     if (rel.edited) markHistoryEdited(item, rel);
   } catch (e) {
     state.forceResponse.delete(item.id);
-    toast(/Invalid InterceptionId/i.test(e.message)
-      ? 'That request is no longer pending (page navigated or request was cancelled).'
-      : `Forward failed: ${e.message}`, 'error');
+    if (/Invalid InterceptionId/i.test(e.message)) {
+      removeFromQueue(item.id);
+      toast('That request is no longer pending (page navigated or request was cancelled).', 'error');
+    } else {
+      toast(`Forward failed: ${e.message}. Fix the edit and try again.`, 'error');
+    }
+    return false;
+  } finally {
+    item.busy = false;
+    renderQueue();
   }
   return true;
 }
 
 async function dropItem(item) {
+  if (item.busy) return;
   removeFromQueue(item.id);
   try {
     await cdp('Fetch.failRequest', { requestId: item.id, errorReason: 'BlockedByClient' });
@@ -722,8 +842,8 @@ async function dropItem(item) {
 
 /** Release everything in the queue (used by Forward all / intercept off / detach). */
 async function releaseAll(applyEdits) {
-  const items = state.queue.slice();
-  state.queue = [];
+  const items = state.queue.filter((item) => !item.busy);
+  state.queue = state.queue.filter((item) => item.busy);
   state.selectedQueueId = null;
   loadEditor();
   renderQueue();
@@ -786,7 +906,7 @@ function onRequestWillBeSent(p) {
     method: p.request.method,
     url: p.request.url,
     reqHeaders: HTTP.headersToList(p.request.headers),
-    reqBody: body.binary ? `[binary request body, ${fmtSize(body.size)}]` : body.text,
+    reqBody: body.binary ? `[binary request body, ${fmtSize(body.size)}]` : limitBody(body.text, 'request body'),
     type: p.type || 'Other',
     wallTime: p.wallTime ? p.wallTime * 1000 : Date.now(),
     ts: p.timestamp,
@@ -798,13 +918,14 @@ function onRequestWillBeSent(p) {
   if (x) { e.reqHeaders = HTTP.headersToList(x.headers); e.reqExtra = true; extraReq.delete(p.requestId); }
   if (!body.known && !body.binary) {
     cdp('Network.getRequestPostData', { requestId: p.requestId }).then((r) => {
-      e.reqBody = r.base64Encoded ? HTTP.decodeBody(HTTP.b64ToBytes(r.postData)).text : r.postData;
+      e.reqBody = limitBody(r.base64Encoded ? HTTP.decodeBody(HTTP.b64ToBytes(r.postData)).text : r.postData, 'request body');
+      pruneHistory();
       touchHistory(e);
     }).catch(() => {});
   }
   netMap.set(p.requestId, e);
   state.history.push(e);
-  if (state.history.length > MAX_HISTORY) state.history.splice(0, state.history.length - MAX_HISTORY);
+  pruneHistory();
   scheduleHistoryRender();
 }
 
@@ -851,20 +972,25 @@ async function onLoadingFinished(p) {
   e.state = 'done';
   touchHistory(e);
   try {
-    const r = await cdp('Network.getResponseBody', { requestId: p.requestId });
-    if (r.base64Encoded) {
-      const bytes = HTTP.b64ToBytes(r.body);
-      const d = HTTP.decodeBody(bytes);
-      e.resBody = d.binary ? `[binary ${e.mime || 'data'}, ${fmtSize(d.size)} — not shown]` : d.text;
+    if (p.encodedDataLength > MAX_BODY_CHARS * 2) {
+      e.resBody = `[body not captured: encoded response is ${fmtSize(p.encodedDataLength)}]`;
     } else {
-      e.resBody = r.body;
+      const r = await cdp('Network.getResponseBody', { requestId: p.requestId });
+      if (r.base64Encoded) {
+        const bytes = HTTP.b64ToBytes(r.body);
+        const d = HTTP.decodeBody(bytes);
+        e.resBody = d.binary ? `[binary ${e.mime || 'data'}, ${fmtSize(d.size)} — not shown]` : d.text;
+      } else {
+        e.resBody = r.body;
+      }
+      e.resBody = limitBody(e.resBody, 'response body');
     }
-    if (e.resBody.length > MAX_BODY_CHARS) e.resBody = e.resBody.slice(0, MAX_BODY_CHARS) + '\n[… truncated]';
   } catch (err) {
     e.resBody = `[body unavailable: ${err.message}]`;
   } finally {
     netMap.delete(p.requestId);
   }
+  pruneHistory();
   touchHistory(e);
 }
 
@@ -894,12 +1020,14 @@ function markHistoryEdited(item, rel) {
 }
 
 function touchHistory(e) {
+  queueLocalSave();
   scheduleHistoryRender();
   if (e.id === state.selectedHistoryId) scheduleDetailRender();
 }
 
 let historyRenderPending = false;
 function scheduleHistoryRender() {
+  queueLocalSave();
   $('#historyCount').textContent = String(state.history.length);
   if (historyRenderPending) return;
   historyRenderPending = true;
@@ -915,10 +1043,30 @@ function scheduleDetailRender() {
   requestAnimationFrame(() => { detailPending = false; renderHistoryDetail(); });
 }
 
-function historyMatches(e, matcher, type, hideStatic) {
+function historyMatches(e, matcher, type, hideStatic, method, status, searchContent) {
   if (type === 'api' ? !['Fetch', 'XHR'].includes(e.type) : type && e.type !== type) return false;
   if (hideStatic && isStatic(e.type, e.url)) return false;
-  return matcher.test(`${e.method} ${e.url} ${e.status ?? ''} ${e.error ?? ''}`);
+  if (method && e.method !== method) return false;
+  if (status === 'pending') {
+    if (e.status != null && !e.error) return false;
+  } else if (status && String(e.status || '')[0] !== status) return false;
+  if (matcher.test(`${e.method} ${e.url} ${e.status ?? ''} ${e.error ?? ''} ${e.note || ''}`)) return true;
+  if (!searchContent) return false;
+  const headers = [...(e.reqHeaders || []), ...(e.resHeaders || [])].map((h) => `${h.name}: ${h.value}`).join('\n');
+  return matcher.test(headers) || matcher.test(e.reqBody || '') || matcher.test(e.resBody || '');
+}
+
+function filteredHistory() {
+  const matcher = compileMatcher($('#historyFilter').value);
+  return state.history.filter((entry) => historyMatches(
+    entry,
+    matcher,
+    $('#historyType').value,
+    state.settings.historyHideStatic,
+    $('#historyMethod').value,
+    $('#historyStatus').value,
+    state.settings.historySearchContent,
+  ));
 }
 
 function statusCell(e) {
@@ -935,9 +1083,12 @@ function renderHistory() {
   $('#historyFilter').classList.toggle('invalid', !matcher.valid);
   const type = $('#historyType').value;
   const hideStatic = state.settings.historyHideStatic;
+  const method = $('#historyMethod').value;
+  const status = $('#historyStatus').value;
+  const searchContent = state.settings.historySearchContent;
   const rows = [];
   for (const e of state.history) {
-    if (!historyMatches(e, matcher, type, hideStatic)) continue;
+    if (!historyMatches(e, matcher, type, hideStatic, method, status, searchContent)) continue;
     let host = '', path = e.url;
     try { const u = new URL(e.url); host = u.host; path = u.pathname + u.search; } catch { /* keep raw */ }
     rows.push(
@@ -949,10 +1100,11 @@ function renderHistory() {
     );
   }
   $('#historyTable tbody').innerHTML = rows.join('');
-  $('#historyEmpty').classList.toggle('hidden', state.history.length > 0);
-  $('#historyEmpty').textContent = state.attached
-    ? 'Waiting for traffic… use your app (or click "Reload tab").'
-    : 'Attach to a tab to start recording traffic.';
+  $('#historyCount').textContent = rows.length === state.history.length ? String(state.history.length) : `${rows.length}/${state.history.length}`;
+  $('#historyEmpty').classList.toggle('hidden', rows.length > 0);
+  $('#historyEmpty').textContent = state.history.length
+    ? 'No requests match the current filters.'
+    : state.attached ? 'Waiting for traffic… use your app (or click "Reload tab").' : 'Attach to a tab or import a HAR file.';
   if (atBottom && $('#historyAutoScroll').checked) wrap.scrollTop = wrap.scrollHeight;
 }
 
@@ -972,7 +1124,9 @@ function historyResponseRaw(e, pretty) {
 
 function renderHistoryDetail() {
   const e = selectedHistory();
-  for (const id of ['#histToRepeater', '#histCurl', '#histCopyReq', '#histCopyResp']) $(id).disabled = !e;
+  for (const id of ['#histToRepeater', '#histCurl', '#histCopyReq', '#histCopyResp', '#histCompare']) $(id).disabled = !e;
+  $('#histInspect').disabled = !e;
+  $('#histSave').disabled = !e;
   if (!e) { setRaw($('#histReq'), ''); setRaw($('#histRes'), ''); return; }
   const pretty = state.settings.prettyJson;
   setRaw($('#histReq'), historyRequestRaw(e, pretty));
@@ -980,7 +1134,9 @@ function renderHistoryDetail() {
 }
 
 function exportHar() {
-  const entries = state.history.map((e) => {
+  const visible = filteredHistory();
+  if (!visible.length) return toast('There are no visible history rows to export.', 'error');
+  const entries = visible.map((e) => {
     let qs = [];
     try { qs = [...new URL(e.url).searchParams].map(([name, value]) => ({ name, value })); } catch { /* ignore */ }
     const ct = HTTP.getHeader(e.reqHeaders, 'content-type') || '';
@@ -1009,6 +1165,125 @@ function exportHar() {
   a.download = `interceptor-${new Date().toISOString().replace(/[:.]/g, '-')}.har`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`Exported ${visible.length} request${visible.length === 1 ? '' : 's'} to HAR.`);
+}
+
+async function importHarFile(file) {
+  if (!file) return;
+  if (file.size > 30_000_000) return toast('HAR import is limited to 30 MB.', 'error');
+  try {
+    const imported = Workbench.importHar(JSON.parse(await file.text()), MAX_HISTORY);
+    if (!imported.length) throw new Error('The HAR contains no HTTP(S) requests.');
+    for (const entry of imported) {
+      entry.id = ++state.seq;
+      entry.requestId = `har:${entry.id}`;
+      entry.reqBody = limitBody(entry.reqBody, 'request body');
+      entry.resBody = limitBody(entry.resBody, 'response body');
+      state.history.push(entry);
+    }
+    pruneHistory();
+    state.selectedHistoryId = state.history.at(-1)?.id ?? null;
+    renderHistory();
+    renderHistoryDetail();
+    toast(`Imported ${imported.length} request${imported.length === 1 ? '' : 's'} from ${file.name}.`);
+  } catch (error) {
+    toast(`HAR import failed: ${error.message}`, 'error');
+  } finally {
+    $('#importHarFile').value = '';
+  }
+}
+
+// ======================================================================
+// Comparer
+// ======================================================================
+function sendToComparer(raw, label) {
+  if (!state.compare.left) {
+    state.compare.left = raw;
+    state.compare.leftLabel = label;
+  } else {
+    state.compare.right = raw;
+    state.compare.rightLabel = label;
+  }
+  switchView('comparer');
+  renderComparer();
+}
+
+function renderComparer() {
+  $('#compareA').value = state.compare.left;
+  $('#compareB').value = state.compare.right;
+  $('#compareLabelA').textContent = state.compare.leftLabel || 'paste or send a history response';
+  $('#compareLabelB').textContent = state.compare.rightLabel || 'paste or send a history response';
+  $('#comparePretty').checked = state.settings.comparePretty !== false;
+  $('#compareBadge').textContent = state.compare.left && state.compare.right ? 'ready' : state.compare.left ? '1/2' : '';
+  runCompare();
+}
+
+function runCompare() {
+  const tbody = $('#compareTable tbody');
+  tbody.innerHTML = '';
+  if (!state.compare.left || !state.compare.right) {
+    $('#compareEmpty').classList.remove('hidden');
+    $('#compareMeta').textContent = 'Add two responses from HTTP History, or paste any text.';
+    state.compare.unified = '';
+    return;
+  }
+  const pretty = $('#comparePretty').checked;
+  const left = Workbench.normalizeForCompare(state.compare.left, pretty);
+  const right = Workbench.normalizeForCompare(state.compare.right, pretty);
+  const diff = Workbench.diffLines(left, right);
+  let leftNo = 0;
+  let rightNo = 0;
+  let changed = 0;
+  const html = [];
+  const unified = [];
+  for (const row of diff.rows) {
+    const hasLeft = row.type !== 'add' && row.type !== 'notice';
+    const hasRight = row.type !== 'remove' && row.type !== 'notice';
+    if (hasLeft) leftNo++;
+    if (hasRight) rightNo++;
+    if (row.type !== 'same') changed++;
+    const marker = row.type === 'same' ? ' ' : row.type === 'add' ? '+' : row.type === 'remove' ? '-' : row.type === 'change' ? '±' : '!';
+    html.push(`<tr class="diff-${row.type}"><td class="diff-mark">${marker}</td><td class="diff-no">${hasLeft ? leftNo : ''}</td><td>${escapeHtml(row.left)}</td><td class="diff-no">${hasRight ? rightNo : ''}</td><td>${escapeHtml(row.right)}</td></tr>`);
+    if (row.type === 'same') unified.push(`  ${row.left}`);
+    else if (row.type === 'remove') unified.push(`- ${row.left}`);
+    else if (row.type === 'add') unified.push(`+ ${row.right}`);
+    else if (row.type === 'change') unified.push(`- ${row.left}`, `+ ${row.right}`);
+    else unified.push(`! ${row.left}`);
+  }
+  tbody.innerHTML = html.join('');
+  state.compare.unified = unified.join('\n');
+  $('#compareEmpty').classList.add('hidden');
+  $('#compareMeta').textContent = changed
+    ? `${changed} changed row${changed === 1 ? '' : 's'} · ${diff.leftLines} vs ${diff.rightLines} lines${diff.truncated ? ' · preview capped' : ''}`
+    : `Identical · ${diff.leftLines} lines`;
+}
+
+function clearComparer() {
+  state.compare = { left: '', right: '', leftLabel: '', rightLabel: '', unified: '' };
+  renderComparer();
+}
+
+// ======================================================================
+// Decoder
+// ======================================================================
+let decoderGeneration = 0;
+async function runDecoder() {
+  const generation = ++decoderGeneration;
+  try {
+    const action = $('#decoderAction').value;
+    const input = $('#decoderInput').value;
+    const result = /^sha(256|512)$/.test(action)
+      ? await Workbench.hash(action === 'sha256' ? 'SHA-256' : 'SHA-512', input)
+      : Workbench.transform(action, input);
+    if (generation !== decoderGeneration) return;
+    $('#decoderOutput').value = result;
+    $('#decoderMeta').textContent = `${result.length.toLocaleString()} output characters · local only`;
+  } catch (error) {
+    if (generation !== decoderGeneration) return;
+    $('#decoderOutput').value = '';
+    $('#decoderMeta').textContent = error.message;
+    toast(`Transform failed: ${error.message}`, 'error');
+  }
 }
 
 // ======================================================================
@@ -1067,10 +1342,13 @@ async function installHeaderRule(url, method, sets, removes) {
     ...[...merged].map(([header, value]) => ({ header, operation: 'set', value })),
     ...removes.map((header) => ({ header, operation: 'remove' })),
   ];
-  const tryRule = (requestHeaders) => chrome.declarativeNetRequest.updateSessionRules({
-    removeRuleIds: [id],
-    addRules: [{ id, priority: 1, action: { type: 'modifyHeaders', requestHeaders }, condition }],
-  });
+  const tryRule = async (requestHeaders) => {
+    const result = await chrome.runtime.sendMessage({
+      type: 'setRepeaterRule',
+      rule: { id, priority: 1, action: { type: 'modifyHeaders', requestHeaders }, condition },
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Header rule could not be installed.');
+  };
   try {
     await tryRule(all);
     return { id, warn: '' };
@@ -1081,12 +1359,17 @@ async function installHeaderRule(url, method, sets, removes) {
       await tryRule(minimal);
       return { id, warn: `Some header overrides were rejected by the browser: ${e.message}` };
     } catch (e2) {
+      await removeHeaderRule(id);
       return { id: null, warn: `Header overrides unavailable (Cookie/Origin/etc. not applied): ${e2.message}` };
     }
   }
 }
-function removeHeaderRule(id) {
-  if (id != null) chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }).catch(() => {});
+async function removeHeaderRule(id) {
+  if (id == null) return;
+  try { await chrome.runtime.sendMessage({ type: 'removeRepeaterRule', ruleId: id }); }
+  catch {
+    try { await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch { /* already gone */ }
+  }
 }
 
 const DEFAULT_RAW = 'GET / HTTP/1.1\nHost: localhost:3000\nAccept: */*\n\n';
@@ -1096,8 +1379,9 @@ function repeaterName(raw) {
   return m ? `${m[1]} ${m[2].split('?')[0]}`.slice(0, 40) : 'request';
 }
 
-function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000' } = {}) {
-  const r = { id: ++state.repSeq, raw, target, follow: false, response: '', sent: '', meta: '', view: 'res', abort: null };
+function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000', follow = false, assertions = '[]' } = {}) {
+  if (state.repeaters.length >= 100) { toast('Keep up to 100 Repeater tabs; save or close older tabs first.', 'error'); return activeRepeater(); }
+  const r = { id: ++state.repSeq, raw, target, follow: !!follow, assertions, tests: [], response: '', sent: '', meta: '', view: 'res', abort: null, snapshots: [], snapshotId: null };
   state.repeaters.push(r);
   state.activeRepeaterId = r.id;
   renderRepeater();
@@ -1106,6 +1390,10 @@ function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000' } = {
 }
 
 function sendToRepeater(raw, url) {
+  const parsed = HTTP.parseRequest(raw, url);
+  if (/^\[binary request body/.test(parsed.body) || /\[… request body truncated/.test(parsed.body)) {
+    return toast('This request body was not captured completely. Create a Repeater request with the original payload to replay it.', 'error');
+  }
   let target = 'http://localhost:3000';
   try { target = new URL(url).origin; } catch { /* keep default */ }
   newRepeater({ raw, target });
@@ -1117,7 +1405,13 @@ const activeRepeater = () => state.repeaters.find((r) => r.id === state.activeRe
 
 let saveTimer;
 function saveRepeaters() {
+  queueLocalSave();
+  if (labState.ready) return;
   clearTimeout(saveTimer);
+  if (!state.settings.repRemember) {
+    chrome.storage.local.remove(['repeaters', 'activeRepeaterId']).catch(() => {});
+    return;
+  }
   saveTimer = setTimeout(() => {
     const data = state.repeaters.map(({ id, raw, target, follow }) => ({ id, raw, target, follow }));
     chrome.storage.local.set({ repeaters: data, activeRepeaterId: state.activeRepeaterId }).catch(() => {});
@@ -1125,8 +1419,20 @@ function saveRepeaters() {
 }
 
 async function loadRepeaters() {
+  // Earlier versions saved tabs automatically. Preserve those tabs on upgrade.
+  const stored = await chrome.storage.local.get(['settings', 'repeaters', 'activeRepeaterId']);
+  if (stored.settings?.repRemember == null && Array.isArray(stored.repeaters) && stored.repeaters.length) {
+    state.settings.repRemember = true;
+    $('#repRemember').checked = true;
+    saveSettings();
+  }
+  if (!state.settings.repRemember) {
+    chrome.storage.local.remove(['repeaters', 'activeRepeaterId']).catch(() => {});
+    newRepeater();
+    return;
+  }
   try {
-    const { repeaters, activeRepeaterId } = await chrome.storage.local.get(['repeaters', 'activeRepeaterId']);
+    const { repeaters, activeRepeaterId } = stored;
     if (Array.isArray(repeaters) && repeaters.length) {
       state.repeaters = repeaters.map((r) => ({ ...r, response: '', sent: '', meta: '', view: 'res', abort: null }));
       state.repSeq = Math.max(...repeaters.map((r) => r.id));
@@ -1156,19 +1462,27 @@ function renderRepeater() {
   $('#repEditor').value = r.raw;
   $('#repTarget').value = r.target;
   $('#repFollow').checked = !!r.follow;
+  $('#repAssertions').value = r.assertions || '[]';
   renderRepeaterResponse();
 }
 
 function renderRepeaterResponse() {
   const r = activeRepeater();
   if (!r) return;
-  $('#repSend').disabled = !!r.abort;
+  $('#repSend').disabled = !!r.abort || repeaterBusy;
   $('#repCancel').disabled = !r.abort;
+  $('#repCompare').disabled = !r.response;
+  const snapshots = r.snapshots || [];
+  $('#repSnapshot').innerHTML = '<option value="">Latest response</option>' + snapshots.slice().reverse().map((snapshot) => `<option value="${snapshot.id}">${escapeHtml(snapshot.label)}</option>`).join('');
+  $('#repSnapshot').value = r.snapshotId || '';
+  $('#repComparePrevious').disabled = snapshots.length < 2;
   $('#repMeta').textContent = r.abort ? 'sending…' : r.meta;
   $('#repViewRes').classList.toggle('active', r.view === 'res');
   $('#repViewSent').classList.toggle('active', r.view === 'sent');
   const pre = $('#repResponse');
-  const text = r.view === 'sent' ? r.sent : r.response;
+  const snapshot = snapshots.find((item) => String(item.id) === String(r.snapshotId));
+  renderAssertionResults($('#repTests'), snapshot?.tests || r.tests || []);
+  const text = r.view === 'sent' ? (snapshot?.sent ?? r.sent) : (snapshot?.response ?? r.response);
   if (r.view === 'res' && state.settings.repPretty && text) {
     const i = text.indexOf('\n\n');
     setRaw(pre, i < 0 ? text : text.slice(0, i + 2) + HTTP.prettyBody(text.slice(i + 2)));
@@ -1188,25 +1502,62 @@ function closeRepeater(id) {
   saveRepeaters();
 }
 
-async function sendRepeater(r) {
-  if (r.abort) return;
-  let p, target;
+let repeaterBusy = false;
+async function readResponseLimited(res, limit) {
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return { bytes: bytes.slice(0, limit), truncated: bytes.length > limit, received: bytes.length };
+  }
+  const reader = res.body.getReader();
+  const parts = [];
+  let kept = 0;
+  let received = 0;
+  let truncated = false;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    received += value.length;
+    if (kept < limit) {
+      const take = value.subarray(0, Math.min(value.length, limit - kept));
+      parts.push(take);
+      kept += take.length;
+    }
+    if (received > limit) {
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+  }
+  return { bytes: HTTP.concatBytes(parts), truncated, received };
+}
+
+async function sendRepeater(r, options = {}) {
+  if (labState.activeTest && !options.lab) return toast('Finish or stop the credential comparison first.', 'error');
+  if (typeof workflowState !== 'undefined' && workflowState.runner.running && !options.runner) return toast('Stop the Runner before sending another request.', 'error');
+  if (r.abort || repeaterBusy) return toast('Wait for the current Repeater request to finish or cancel it.', 'error');
+  let p, target, assertions;
   try {
-    target = new URL(r.target.trim() || 'http://localhost');
-    p = HTTP.parseRequest(r.raw, target.href);
+    assertions = Lab.parseAssertions(r.assertions || '[]');
+    const prepared = options.prepared || Workflow.prepareRequest(r.raw, r.target.trim() || 'http://localhost', workspaceVariableText(), options.extra || {});
+    target = new URL(prepared.target);
+    p = prepared.parsed;
   } catch (e) {
     r.response = '';
     r.meta = '';
-    renderRepeaterResponse();
-    $('#repResponse').innerHTML = `<span class="s5">${escapeHtml(e.message)}</span>`;
-    return;
+    if (!options.quiet) {
+      renderRepeaterResponse();
+      $('#repResponse').innerHTML = `<span class="s5">${escapeHtml(e.message)}</span>`;
+    }
+    return { error: e.message, status: 0, duration: 0, bytes: 0 };
   }
   const url = new URL(p.url);
   url.hash = '';
   // The Host header decides where the request goes; keep the Target field in sync.
-  r.target = url.origin;
-  if (r.id === state.activeRepeaterId) $('#repTarget').value = r.target;
-  saveRepeaters();
+  if (!/\{\{/.test(r.target + r.raw)) {
+    r.target = url.origin;
+    if (r.id === state.activeRepeaterId) $('#repTarget').value = r.target;
+  }
+  if (!options.quiet) saveRepeaters();
 
   const warnings = [];
   const fetchHeaders = new Headers();
@@ -1223,18 +1574,26 @@ async function sendRepeater(r) {
   const noBody = p.method === 'GET' || p.method === 'HEAD';
   if (noBody && p.body.trim()) warnings.push(`body ignored (browsers can't send a body with ${p.method})`);
 
-  const rule = await installHeaderRule(url.href, p.method, dnrSet, removes);
-  if (rule.warn) warnings.push(rule.warn);
-
+  repeaterBusy = true;
+  let rule = { id: null, warn: '' };
   const capture = { url: url.href, method: p.method, requestId: null };
   pendingCaptures.add(capture);
   const ctrl = new AbortController();
+  const abortExternal = () => ctrl.abort();
+  if (options.signal?.aborted) ctrl.abort();
+  options.signal?.addEventListener('abort', abortExternal, { once: true });
+  const timeoutMs = options.timeoutMs || Math.max(1, Math.min(300, Number($('#repTimeout').value) || 30)) * 1000;
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
+  let result = { status: 0, duration: 0, bytes: 0, error: '' };
   r.abort = ctrl;
   r.response = '';
   r.sent = '';
-  renderRepeaterResponse();
+  if (!options.quiet) renderRepeaterResponse();
   const t0 = performance.now();
   try {
+    rule = await installHeaderRule(url.href, p.method, dnrSet, removes);
+    if (rule.warn) warnings.push(rule.warn);
     const res = await fetch(url.href, {
       method: p.method,
       headers: fetchHeaders,
@@ -1244,10 +1603,12 @@ async function sendRepeater(r) {
       cache: 'no-store',
       signal: ctrl.signal,
     });
-    const buf = new Uint8Array(await res.arrayBuffer());
+    const read = await readResponseLimited(res, MAX_REPEATER_BYTES);
+    const buf = read.bytes;
     const ms = performance.now() - t0;
     const d = HTTP.decodeBody(buf);
-    const bodyText = d.binary ? `[binary body, ${fmtSize(d.size)} — not shown]` : d.text;
+    let bodyText = d.binary ? `[binary body, ${fmtSize(d.size)} — not shown]` : d.text;
+    if (read.truncated) bodyText += `\n[… response truncated after ${fmtSize(MAX_REPEATER_BYTES)}]`;
     let statusLine, headers, status;
     if (capture.statusLine) {
       statusLine = capture.statusLine;
@@ -1260,14 +1621,18 @@ async function sendRepeater(r) {
     }
     if (res.type === 'opaqueredirect' && !capture.statusLine) statusLine = 'HTTP/1.1 3xx (redirect — enable "Follow redirects" to follow it)';
     r.response = statusLine + '\n' + HTTP.headersToList(headers).map((h) => `${h.name}: ${h.value}`).join('\n') + '\n\n' + bodyText;
-    r.meta = `${status} · ${fmtMs(ms)} · ${fmtSize(buf.length)}${warnings.length ? ' · ⚠ ' + warnings.join('; ') : ''}`;
+    r.meta = `${status} · ${fmtMs(ms)} · ${read.truncated ? '>' : ''}${fmtSize(read.received)}${warnings.length ? ' · ⚠ ' + warnings.join('; ') : ''}`;
+    result = { status, duration: ms, bytes: read.received, truncated: read.truncated, error: '', url: url.href };
   } catch (e) {
     r.response = '';
     r.meta = warnings.length ? '⚠ ' + warnings.join('; ') : '';
     r.response = e.name === 'AbortError'
-      ? 'HTTP/0 Cancelled\n\n[request cancelled]'
+      ? `HTTP/0 ${timedOut ? 'Timed out' : 'Cancelled'}\n\n[request ${timedOut ? 'timed out' : 'cancelled'}]`
       : `HTTP/0 Network error\n\n${e.message}\n\nCommon causes: server not running, wrong port/scheme, invalid TLS certificate (open the URL in a tab and accept it first), or a forbidden method (CONNECT/TRACE).`;
+    result = { status: 0, duration: performance.now() - t0, bytes: 0, error: timedOut ? 'Timed out' : e.name === 'AbortError' ? 'Cancelled' : e.message, url: url.href };
   } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortExternal);
     if (capture.sentHeaders) {
       const sent = new URL(capture.sentUrl);
       r.sent = `${capture.sentMethod} ${sent.pathname}${sent.search} HTTP/1.1\nHost: ${sent.host}\n` +
@@ -1275,20 +1640,47 @@ async function sendRepeater(r) {
         '\n\n' + (noBody ? '' : p.body);
     }
     pendingCaptures.delete(capture);
-    removeHeaderRule(rule.id);
+    await removeHeaderRule(rule.id);
+    repeaterBusy = false;
     r.abort = null;
+    r.snapshotId = null;
+    r.tests = Lab.runAssertions(assertions, r.response, result);
+    result.tests = r.tests;
+    recordWorkbenchResponse(r, p, result, t0);
+    if (!options.quiet && r.response) {
+      r.snapshots ||= [];
+      const id = (r.snapshotSeq || 0) + 1;
+      r.snapshotSeq = id;
+      const cap = (text) => text.length <= 200_000 ? text : text.slice(0, 200_000) + '\n[Snapshot preview truncated]';
+      r.snapshots.push({ id, label: `${id} · ${result.status || result.error} · ${fmtMs(result.duration)}`, response: cap(r.response), sent: cap(r.sent), tests: r.tests });
+      if (r.snapshots.length > 5) r.snapshots.shift();
+    }
     if (r.id === state.activeRepeaterId) { renderRepeaterResponse(); renderRepeater(); }
+    queueLocalSave();
   }
+  return result;
 }
 
 // ======================================================================
 // Views & wiring
 // ======================================================================
 function switchView(name) {
-  for (const b of $$('.tabs button')) b.classList.toggle('active', b.dataset.view === name);
+  for (const b of $$('.tabs button')) {
+    b.classList.toggle('active', b.dataset.view === name);
+    if (b.dataset.view === name) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
   for (const v of $$('.view')) v.classList.toggle('active', v.id === `view-${name}`);
   if (name === 'history') { renderHistory(); renderHistoryDetail(); }
   if (name === 'repeater') renderRepeater();
+  if (name === 'comparer') renderComparer();
+  if (name === 'sitemap') renderSiteMap();
+  if (name === 'collections') renderCollections();
+  if (name === 'inspector') renderInspector();
+  if (name === 'runner') renderRunner();
+  if (name === 'security') renderSecurity();
+  if (name === 'workspace') renderWorkspace();
+  if (name === 'websocket') renderWebSockets();
 }
 
 function bindUi() {
@@ -1337,22 +1729,30 @@ function bindUi() {
     e.target.classList.toggle('invalid', !compileMatcher(e.target.value).valid);
     saveSettings();
   });
-  $('#autoClearLog').addEventListener('click', () => {
+  $('#autoClearLog').addEventListener('click', async () => {
     state.autoLog = [];
     state.autoCount = 0;
+    try { await chrome.runtime.sendMessage({ type: 'resetAutoCount' }); } catch { /* ignore */ }
     renderAutoLog();
     updateStatus();
   });
 
   // Auto mode is configured from the popup; react to storage changes live.
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'session' && changes.autoTabId) {
+      state.settings.autoTabId = changes.autoTabId.newValue ?? null;
+      if (state.attached) applyFetch().catch(() => {});
+      updateStatus();
+      return;
+    }
     if (area !== 'local' || !changes.settings) return;
     const s = changes.settings.newValue || {};
     const wasActive = autoActive();
     if ('autoMode' in s) state.settings.autoMode = s.autoMode;
     if (Array.isArray(s.autoRules)) state.settings.autoRules = s.autoRules;
     if (s.autoScope === 'tab' || s.autoScope === 'all') state.settings.autoScope = s.autoScope;
-    if (typeof s.autoTabId === 'number' || s.autoTabId === null) state.settings.autoTabId = s.autoTabId;
+    if ('autoInclude' in s) state.settings.autoInclude = String(s.autoInclude || '');
+    if ('autoExclude' in s) state.settings.autoExclude = String(s.autoExclude || '');
     if (autoActive() !== wasActive && state.attached) applyFetch().catch(() => {});
     updateStatus();
   });
@@ -1365,7 +1765,10 @@ function bindUi() {
   // History
   $('#historyFilter').addEventListener('input', scheduleHistoryRender);
   $('#historyType').addEventListener('change', renderHistory);
+  $('#historyMethod').addEventListener('change', renderHistory);
+  $('#historyStatus').addEventListener('change', renderHistory);
   bindCheck('#historyHideStatic', 'historyHideStatic', renderHistory);
+  bindCheck('#historySearchContent', 'historySearchContent', renderHistory);
   bindCheck('#prettyJson', 'prettyJson', renderHistoryDetail);
   $('#historyTable tbody').addEventListener('click', (ev) => {
     const tr = ev.target.closest('tr');
@@ -1380,6 +1783,12 @@ function bindUi() {
   $('#histCurl').addEventListener('click', () => { const e = selectedHistory(); if (e) copyText(HTTP.toCurl({ method: e.method, url: e.url, headers: e.reqHeaders, body: e.reqBody }), 'cURL command copied'); });
   $('#histCopyReq').addEventListener('click', () => { const e = selectedHistory(); if (e) copyText(historyRequestRaw(e, false), 'Request copied'); });
   $('#histCopyResp').addEventListener('click', () => { const e = selectedHistory(); if (e) copyText(historyResponseRaw(e, false), 'Response copied'); });
+  $('#histCompare').addEventListener('click', () => {
+    const e = selectedHistory();
+    if (e) sendToComparer(historyResponseRaw(e, false), `#${e.id} ${e.status || ''} ${shortUrl(e.url)}`);
+  });
+  $('#importHar').addEventListener('click', () => $('#importHarFile').click());
+  $('#importHarFile').addEventListener('change', (e) => importHarFile(e.target.files && e.target.files[0]));
   $('#exportHar').addEventListener('click', exportHar);
   $('#clearHistory').addEventListener('click', () => {
     state.history = [];
@@ -1405,15 +1814,70 @@ function bindUi() {
   $('#repFollow').addEventListener('change', (e) => { const r = activeRepeater(); if (r) { r.follow = e.target.checked; saveRepeaters(); } });
   $('#repPretty').checked = state.settings.repPretty;
   $('#repPretty').addEventListener('change', (e) => { state.settings.repPretty = e.target.checked; saveSettings(); renderRepeaterResponse(); });
+  $('#repRemember').checked = state.settings.repRemember;
+  $('#repRemember').addEventListener('change', (e) => {
+    state.settings.repRemember = e.target.checked;
+    saveSettings();
+    saveRepeaters();
+    toast(e.target.checked ? 'Repeater tabs will be saved locally.' : 'Saved Repeater data cleared.');
+  });
   $('#repSend').addEventListener('click', () => { const r = activeRepeater(); if (r) sendRepeater(r); });
   $('#repCancel').addEventListener('click', () => { const r = activeRepeater(); if (r && r.abort) r.abort.abort(); });
+  $('#repCompare').addEventListener('click', () => {
+    const r = activeRepeater();
+    const snapshot = r?.snapshots?.find((item) => String(item.id) === String(r.snapshotId));
+    if (r && r.response) sendToComparer(snapshot?.response || r.response, `Repeater ${r.id} · ${repeaterName(r.raw)}`);
+  });
   $('#repViewRes').addEventListener('click', () => { const r = activeRepeater(); if (r) { r.view = 'res'; renderRepeaterResponse(); } });
   $('#repViewSent').addEventListener('click', () => { const r = activeRepeater(); if (r) { r.view = 'sent'; renderRepeaterResponse(); } });
 
+  // Comparer
+  let compareTimer;
+  for (const [selector, key, label] of [['#compareA', 'left', 'edited text'], ['#compareB', 'right', 'edited text']]) {
+    $(selector).addEventListener('input', (e) => {
+      state.compare[key] = e.target.value;
+      state.compare[`${key}Label`] = label;
+      clearTimeout(compareTimer);
+      compareTimer = setTimeout(runCompare, 120);
+    });
+  }
+  $('#compareRun').addEventListener('click', runCompare);
+  $('#compareSwap').addEventListener('click', () => {
+    [state.compare.left, state.compare.right] = [state.compare.right, state.compare.left];
+    [state.compare.leftLabel, state.compare.rightLabel] = [state.compare.rightLabel, state.compare.leftLabel];
+    renderComparer();
+  });
+  $('#compareClear').addEventListener('click', clearComparer);
+  $('#compareCopy').addEventListener('click', () => copyText(state.compare.unified || '', 'Unified diff copied'));
+  $('#comparePretty').addEventListener('change', (e) => {
+    state.settings.comparePretty = e.target.checked;
+    saveSettings();
+    runCompare();
+  });
+
+  // Decoder
+  $('#decoderRun').addEventListener('click', runDecoder);
+  $('#decoderInput').addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runDecoder(); }
+  });
+  $('#decoderSwap').addEventListener('click', () => {
+    $('#decoderInput').value = $('#decoderOutput').value;
+    $('#decoderOutput').value = '';
+    $('#decoderInput').focus();
+  });
+  $('#decoderClear').addEventListener('click', () => {
+    decoderGeneration++;
+    $('#decoderInput').value = '';
+    $('#decoderOutput').value = '';
+    $('#decoderMeta').textContent = 'Everything runs locally.';
+  });
+  $('#decoderCopy').addEventListener('click', () => copyText($('#decoderOutput').value, 'Output copied'));
+
   // Detaching releases every paused request, so the target tab never hangs.
   window.addEventListener('pagehide', () => {
+    closingDashboard = true;
     if (state.attached) chrome.debugger.detach({ tabId: state.tabId }).catch(() => {});
-    chrome.storage.local.set({ attachedTabId: false, attachedHost: '' }).catch(() => {});
+    chrome.storage.session.set({ attachedTabId: false, attachedHost: '' }).catch(() => {});
     // Hand the tab back to Auto mode (best-effort during unload).
     chrome.storage.session.set({ dashboardTabId: null }).catch(() => {});
   });
@@ -1427,6 +1891,7 @@ async function cleanupStale() {
     const rules = await chrome.declarativeNetRequest.getSessionRules();
     const ids = rules.filter((r) => r.id >= 1000 && r.id < 101000).map((r) => r.id);
     if (ids.length) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids });
+    await chrome.storage.session.set({ repeaterRuleIds: [] });
   } catch { /* ignore */ }
   // A fresh dashboard hasn't claimed any tab yet; drop a stale claim from a prior crash.
   try { await chrome.storage.session.set({ dashboardTabId: null }); } catch { /* ignore */ }
@@ -1435,11 +1900,18 @@ async function cleanupStale() {
 (async function init() {
   await cleanupStale();
   await loadSettings();
+  try {
+    const status = await chrome.runtime.sendMessage({ type: 'getAutoStatus' });
+    if (typeof status?.count === 'number') state.autoCount = status.count;
+  } catch { /* worker unavailable */ }
   bindUi();
   await refreshTabs();
   await loadRepeaters();
+  await bindWorkflow();
+  await bindLab();
   updateStatus();
   renderQueue();
   renderAutoLog();
   renderHistory();
+  renderComparer();
 })();
