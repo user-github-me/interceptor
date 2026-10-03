@@ -14,6 +14,7 @@
 - Same-origin GET/HEAD/OPTIONS comparison with and without credential headers, cancellation, and response diff.
 - Passive WebSocket text/binary frame inspection, filtering, decoding, and export.
 - Automatic local IndexedDB persistence for the complete workbench, named environments, recovered paused text, full backup/restore with preview and undo, and optional AES-GCM password encryption.
+- GitHub feature issues linked to the v1.1 PR, a contribution guide, bug/feature issue forms, a PR template, and automated syntax/regression checks for contributions.
 - cURL import, Repeater duplication, request timeouts, five response snapshots per tab, and compare-previous.
 - Hex encode/decode, SHA-256/SHA-512 hashing, and a keyboard tool switcher (⌘/Ctrl+K).
 

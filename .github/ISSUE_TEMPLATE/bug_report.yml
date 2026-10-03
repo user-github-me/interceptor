@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible problem in the browser workbench.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues and pull requests first. Use synthetic or redacted requests, logs, screenshots, and backups; remove cookies, tokens, keys, and personal data.
+  - type: input
+    id: versions
+    attributes:
+      label: Extension and browser versions
+      description: Include the operating system and whether the extension is installed from the store or loaded unpacked.
+      placeholder: "Interceptor 1.1.0, Brave 154, macOS, unpacked"
+    validations:
+      required: true
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Affected tool
+      options:
+        - Intercept / Auto mode
+        - HTTP History / HAR
+        - Repeater
+        - API Builder
+        - Runner / assertions
+        - Collections / environments
+        - Security Review
+        - WebSockets
+        - Workspace / backup / restore
+        - Site Map / Inspector
+        - Comparer / Decoder
+        - Popup / navigation / accessibility
+        - Another area
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide numbered steps and, if possible, a small local test app or synthetic request.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error text and whether the problem occurs consistently.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence and additional context
+      description: Optional redacted logs, screenshots, request examples, and workaround. Do not attach an unredacted workspace backup.

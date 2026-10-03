@@ -291,7 +291,9 @@ This is a tool for testing **your own** applications, or ones you have **explici
 
 ## Contributing
 
-Issues and PRs are welcome — bug reports, new default field names, and UI polish especially. Keep it dependency-free and match the existing style. If you change the rewrite engine, add a unit test in the same spirit as the existing ones. Work on a feature branch and submit a pull request; updates are reviewed before merging into `main`.
+Start with a [bug report or feature issue](https://github.com/user-github-me/interceptor/issues), agree on a focused scope, and implement it on a feature branch. Open a linked PR for review. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, templates, browser verification, and design constraints. GitHub Actions runs the syntax and regression checks on PRs.
+
+The current v1.1 upgrade is tracked in [issues #2–#9](https://github.com/user-github-me/interceptor/issues?q=is%3Aissue%20is%3Aopen) and [PR #1](https://github.com/user-github-me/interceptor/pull/1). These issues remain open until merge; use separate issues for follow-up contributions.
 
 ## License
 
