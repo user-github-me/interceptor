@@ -102,6 +102,7 @@ try {
     assert.notEqual(rendered.decoderIcon, '⌘');
   }
   await evaluate(`applyShortcutHints(${JSON.stringify(platform)})`);
+  await until('typeof labState !== "undefined" && labState.ready');
   for (const key of ['ctrlKey', 'metaKey']) {
     await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',${key}:true,bubbles:true}))`);
     assert.equal(await evaluate('document.querySelector("#toolDialog").open'), true);
