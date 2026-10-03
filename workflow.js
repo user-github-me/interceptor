@@ -17,12 +17,22 @@
 
   function interpolate(text, values) {
     const missing = new Set();
-    const result = String(text || '').replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (whole, key) => {
+    const result = String(text || '').replace(/\{\{\s*(url:)?([\w.-]+)\s*\}\}/g, (whole, encoding, key) => {
       if (!Object.hasOwn(values, key)) { missing.add(key); return whole; }
-      return String(values[key]);
+      return encoding ? encodeURIComponent(String(values[key])) : String(values[key]);
     });
     if (missing.size) throw new Error(`Missing variables: ${[...missing].join(', ')}.`);
     return result;
+  }
+
+  /** Encode literal form text while keeping environment values encoded at send time. */
+  function encodeFormTemplate(text) {
+    let result = '', offset = 0;
+    for (const match of String(text ?? '').matchAll(/\{\{\s*(?:url:)?([\w.-]+)\s*\}\}/g)) {
+      result += encodeURIComponent(String(text ?? '').slice(offset, match.index)) + `{{url:${match[1]}}}`;
+      offset = match.index + match[0].length;
+    }
+    return result + encodeURIComponent(String(text ?? '').slice(offset));
   }
 
   function prepareRequest(raw, target, variableText = '', extra = {}) {
@@ -31,6 +41,7 @@
     const expandedTarget = interpolate(target, values);
     const parsed = HTTP.parseRequest(expandedRaw, expandedTarget);
     if (!/^https?:$/.test(new URL(parsed.url).protocol)) throw new Error('Requests must use HTTP or HTTPS.');
+    if (HTTP.isUnavailableRequestBody(parsed.body)) throw new Error('This request body was not captured completely. Replace it with the original payload before sending.');
     return { raw: expandedRaw, target: new URL(parsed.url).origin, parsed };
   }
 
@@ -225,7 +236,7 @@
     return rows.map((row) => row.map(cell).join(',')).join('\r\n');
   }
 
-  const api = { variablesFromText, interpolate, prepareRequest, payloadsFromText, importCurl, siteMap, inspectRequest, importCollection, csvRows };
+  const api = { variablesFromText, interpolate, encodeFormTemplate, prepareRequest, payloadsFromText, importCurl, siteMap, inspectRequest, importCollection, csvRows };
   global.Workflow = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

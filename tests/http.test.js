@@ -14,6 +14,12 @@ test('raw requests round-trip duplicate headers and derive the target from Host'
   assert.equal(parsed.body, 'amount=9');
 });
 
+test('raw HTTP rejects malformed header names and control values before sending', () => {
+  assert.throws(() => HTTP.parseRequest('GET / HTTP/1.1\nBad Header: value\n\n', 'https://example.test'), /Invalid HTTP header/);
+  assert.throws(() => HTTP.parseRequest('GET / HTTP/1.1\nX-Test: value\u0000\n\n', 'https://example.test'), /Invalid HTTP header/);
+  assert.equal(HTTP.parseRequest('GET / HTTP/1.1\nX-Test: good\n\n', 'https://example.test').headers[0].value, 'good');
+});
+
 test('query rewriting preserves unrelated URL encoding exactly', () => {
   const result = HTTP.applyParamRule({
     url: 'https://example.test/pay?note=hello%20world&amount=9&keep=a+b#receipt',
@@ -76,7 +82,14 @@ test('URL scope supports text, glob, regex, comments, and exclusion precedence',
 test('incomplete CDP post data is never marked safe to replace', () => {
   const result = HTTP.requestBodyText({ hasPostData: true, postDataEntries: [{ bytes: btoa('known') }, {}] });
   assert.equal(result.known, false);
+  assert.equal(result.text, '', 'partial bytes are not offered as a replayable body');
   assert.equal(HTTP.requestBodyText({ hasPostData: true, postData: 'partial', postDataEntries: [{ bytes: btoa('known') }, {}] }).known, false);
+  assert.equal(HTTP.requestBodyText({ hasPostData: true, postDataEntries: [{ bytes: '%%%' }] }).known, false);
+  assert.equal(HTTP.requestBodyText({ hasPostData: true, postDataEntries: [{ bytes: btoa('\0'.repeat(100)) }] }).binary, true);
+  assert.equal(HTTP.isUnavailableRequestBody('[request body unavailable: full upload bytes were not captured]'), true);
+  assert.equal(HTTP.isUnavailableRequestBody('[binary request body, 10 B]'), true);
+  assert.equal(HTTP.isUnavailableRequestBody('partial\n[… request body truncated; 800 KB total]'), true);
+  assert.equal(HTTP.isUnavailableRequestBody('{"body":"available"}'), false);
 });
 
 test('JSON formatting preserves large numeric tokens and escaped strings', () => {

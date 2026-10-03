@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="dashboard.css">
   <link rel="stylesheet" href="workflow.css">
   <link rel="stylesheet" href="lab.css">
+  <link rel="stylesheet" href="layout.css">
 </head>
 <body>
   <header class="topbar">
@@ -333,7 +334,7 @@
     </section>
     <section id="view-workspace" class="view">
       <div class="view-heading"><div><h1>Workspace</h1><p>Your requests, history, responses, and results. Saved on this PC.</p></div><span id="localSaveStatus" class="key-hint" role="status">Opening local database…</span></div>
-      <div class="workspace-cards"><article class="workspace-card"><h2>Local storage</h2><p>Work is saved automatically in this browser profile’s local database. No account, cloud sync, or telemetry. Stored requests and backups can contain cookies, tokens, and personal data.</p><div id="workspaceCounts" class="workspace-counts"></div><button id="workspaceSaveNow">Save now</button><button id="workspaceUndoRestore">Undo last restore</button></article>
+      <div class="workspace-cards"><article class="workspace-card"><h2>Local storage</h2><p>Work is saved automatically in this browser profile’s local database. No account, cloud sync, or telemetry. Stored requests and backups can contain cookies, tokens, and personal data.</p><div id="workspaceCounts" class="workspace-counts"></div><button id="workspaceSaveNow">Save now</button><button id="workspaceUndoRestore">Undo last restore</button><h2>Pane layout</h2><p>Drag a divider to resize panes. Focus it and use arrow keys, or double-click to reset that split. Sizes are saved locally for wide and stacked views.</p><button id="layoutReset">Reset all pane sizes</button><p id="layoutStatus" class="hint" role="status"></p></article>
       <article class="workspace-card"><h2>Download &amp; restore everything</h2><p>Back up history, requests, response snapshots, collections, settings, environments, tool drafts, findings, frames, and run results. Live debugger sessions are started manually.</p><label for="backupPassword">Backup password <span class="hint">optional; 8+ characters encrypts the file</span></label><input id="backupPassword" type="password" autocomplete="off" placeholder="Leave blank for readable JSON"><div class="toolbar small"><button id="backupDownload" class="primary">Download full backup</button><button id="backupImport">Import backup</button><input id="backupFile" type="file" accept=".json,application/json" class="hidden"></div><p class="hint">Use the same password to import an encrypted backup. Passwords are never saved.</p><div id="backupPreview" class="hidden"><p id="backupSummary"></p><button id="backupRestore" class="danger">Replace workspace with this backup</button><button id="backupDismiss">Cancel import</button></div></article>
       <article class="workspace-card environment-card"><h2>Environments</h2><p>Switch between local, staging, and other test accounts. Active environment values override the shared variables in Collections.</p><div class="toolbar small"><select id="environmentSelect" aria-label="Active environment"><option value="">Shared variables only</option></select><button id="environmentNew">New environment</button><button id="environmentDelete">Delete</button></div><label for="environmentName">Name</label><input id="environmentName" maxlength="100"><label for="environmentVariables">Variables <span class="hint">name=value per line</span></label><textarea id="environmentVariables" spellcheck="false" placeholder="baseUrl=http://localhost:3000&#10;token=your-test-token"></textarea><p id="environmentMeta" class="hint"></p></article><article class="workspace-card environment-card"><h2>Recovered paused edits</h2><p>Saved text from requests or responses paused in a previous session. These drafts do not restart interception or send traffic.</p><div id="recoveredDrafts"></div></article></div>
     </section>
@@ -348,6 +349,7 @@
   <script src="workflow.js"></script>
   <script src="lab.js"></script>
   <script src="local-store.js"></script>
+  <script src="layout.js"></script>
   <script src="dashboard.js"></script>
   <script src="workflow-ui.js"></script>
   <script src="lab-ui.js"></script>

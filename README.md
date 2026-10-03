@@ -42,8 +42,9 @@ Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, 
 - 🛡️ **Security Review** — passive checks of captured headers, cookies, CORS, caching, transport, URL credentials, and debug errors; manual credential comparison and reports.
 - ⇌ **WebSockets** — observe sent/received text and binary frame previews from the attached tab, filter, decode, and export.
 - 💾 **Workspace** — automatic saving on your PC, named environments, full backup/import with restore preview and undo, and optional password encryption.
+- ↔️ **Resizable panes** — drag dividers throughout split tools, or focus them and use arrow keys. Wide and stacked sizes save locally, survive reloads, and travel in full backups. Double-click a divider to reset it, or reset all sizes in Workspace.
 - 🕘 **Response snapshots** — Repeater retains the last five responses for each tab and compares successive sends. Set a request timeout and duplicate requests with one click.
-- 🧩 Works in **Brave, Chrome and Edge**. Pure JavaScript, **no build step**, no dependencies, no data leaves your machine.
+- 🧩 Works in **Brave, Chrome and Edge**. Pure JavaScript, **no build step**, no dependencies, no telemetry or cloud storage.
 
 ## Screenshots
 
@@ -143,8 +144,8 @@ Use **Command+K** on macOS or **Ctrl+K** on Windows/Linux to jump to any workben
 JSON paths use JSON Pointer (`/items/0/id`, `~1` for `/`, `~0` for `~`). Headers
 support `equals`, `contains`, or `absent: true`; JSON fields support `equals` or
 `absent: true`. Other checks: `bodyContains` with `value`, and `size` with `max`
-bytes. JSON assertions use JavaScript number precision; inspect exact large
-numeric tokens in Inspector or use literal body text checks. Failed network sends
+bytes. JSON assertions reject numbers that cannot be represented exactly in the
+supported range; inspect exact large numeric tokens in Inspector or use literal body text checks. Failed network sends
 fail every assertion. Truncated responses are labeled as capped previews.
 
 **Collections → Import collection** accepts Interceptor JSON and Postman v2-style
@@ -230,15 +231,16 @@ Use **URL safety scope** to constrain those rules. Each line can be plain text, 
 | `webRequest` | Show the *"Actual request sent"* view in Repeater. |
 | `declarativeNetRequestWithHostAccess` | Let Repeater send otherwise-forbidden headers (`Cookie`, `Origin`, `User-Agent`, …) exactly as typed. |
 | `clipboardWrite` | Copy raw messages, cURL commands, decoded output, and diffs when you click a copy button. |
-| `<all_urls>` | You decide which of *your* sites to test; traffic never leaves your machine. |
+| `<all_urls>` | Access traffic from the sites you select and send your API tests to their chosen targets. |
 
-There are no analytics or telemetry. Traffic is processed locally; Repeater sends requests only to the target you choose.
+There are no analytics or telemetry. Analysis and storage are local; active API tools send requests only to the targets you choose.
 
 ## Limitations
 
 - One **manually-attached** tab at a time for the deep intercept/history/repeater workflow (Auto mode can cover all tabs).
 - WebSocket frames can be inspected but are not paused/modified. Server-Sent Events are not intercepted as individual events.
 - Bodies are edited as UTF-8 text; binary and oversized bodies are passed through unchanged. History keeps up to 2,500 entries, 750,000 characters per body, and a 64-million-character total text budget. Repeater previews up to 4 MB per response.
+- Raw panes render up to 200,000 characters to keep large responses responsive while resizing. Copy and exports retain the stored text within each tool's capture limits.
 - Workspaces save automatically in the browser profile on your PC. Repeater supports 100 tabs; Collections 100 requests; environments 50; WebSockets 1,000 capped frames. Browser disk quotas still apply; the UI reports save failures and offers backup download.
 - Runner is limited to 50 payloads and keeps capped response previews. Site Map and passive Security Review cover recorded/imported traffic; they do not crawl sites or prove vulnerabilities automatically.
 - cURL import supports literal URLs, method, headers, body, cookies, Basic auth, and redirects. Unsupported options and file uploads are rejected instead of silently omitted.
@@ -255,11 +257,25 @@ npm test
 npm run check
 ```
 
+To prepare store artifacts locally (Node 22+, Python 3 and a Chromium packer):
+
+```bash
+npm run release
+npm run release:sign -- --key local/key.pem
+npm run release:verify
+```
+
+The signed build requires your existing signing key and previous local CRX;
+it does not create a replacement key. Outputs stay under ignored
+`local/release-1.1.0/`. ZIP and CRX payloads contain the same runtime files; the
+verification report checks signatures, identity continuity, content and checksums.
+
 The browser integration check uses a local echo server and an isolated Chromium
 profile with the unpacked extension loaded and remote debugging enabled:
 
 ```bash
 node tests/browser-integration.mjs http://127.0.0.1:9226
+node tests/browser-popup.mjs http://127.0.0.1:9226 --screenshots
 ```
 
 It checks debugger attachment, request/response edits, Auto scope and worker
@@ -267,6 +283,10 @@ handoff, Repeater headers and rule cleanup, response limits, HAR import,
 Inspector, Site Map, variables, Runner cancellation, snapshots, Builder authentication
 and assertions, credential comparisons, live WebSocket frames, encrypted full
 backups, restoration without traffic, and local persistence across reloads.
+It also checks every draggable split, keyboard/reset actions, saved sizes, both
+themes at narrow widths, auth/body modes, exports, Postman import, storage failures,
+encrypted file import, and restore undo. Add `--screenshots --store-screenshots`
+to create local workbench captures and five 1280×800 store images.
 
 ```
 manifest.json      MV3 manifest
@@ -293,7 +313,7 @@ This is a tool for testing **your own** applications, or ones you have **explici
 
 Start with a [bug report or feature issue](https://github.com/user-github-me/interceptor/issues), agree on a focused scope, and implement it on a feature branch. Open a linked PR for review. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, templates, browser verification, and design constraints. GitHub Actions runs the syntax and regression checks on PRs.
 
-The current v1.1 upgrade is tracked in [issues #2–#9](https://github.com/user-github-me/interceptor/issues?q=is%3Aissue%20is%3Aopen) and [PR #1](https://github.com/user-github-me/interceptor/pull/1). These issues remain open until merge; use separate issues for follow-up contributions.
+The v1.1 feature work in [PR #1](https://github.com/user-github-me/interceptor/pull/1) has merged and its linked issues are closed. Release validation and follow-up fixes use separate issues and PRs. An issue closes when its implementing PR merges into `main` with a `Closes #number` reference.
 
 ## License
 

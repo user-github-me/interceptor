@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { runReleaseChecks } from './browser-release-cases.mjs';
+import { runLayoutCases } from './browser-layout-cases.mjs';
 
 // Run against an isolated Chromium profile with this extension loaded.
 const debuggingOrigin = process.argv[2] || 'http://127.0.0.1:9226';
@@ -65,6 +67,9 @@ const server = http.createServer((req, res) => {
     } else if (req.url === '/large') {
       res.setHeader('Content-Type', 'text/plain');
       res.end('x'.repeat(4_100_000));
+    } else if (req.url === '/redirect') {
+      res.writeHead(303, { Location: '/redirect-final' });
+      res.end();
     } else if (req.url.startsWith('/slow')) {
       setTimeout(() => { if (!res.destroyed) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true })); } }, 1500);
     } else {
@@ -75,6 +80,7 @@ const server = http.createServer((req, res) => {
 });
 const socketConnections = new Set();
 server.on('upgrade', (req, connection) => {
+  connection.on('error', () => {}); // Clients can close while the fixture frame is queued.
   socketConnections.add(connection);
   connection.on('close', () => socketConnections.delete(connection));
   const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
@@ -348,6 +354,14 @@ try {
   assert.equal(await evaluate('labState.pendingBackup'), null);
   assert.equal(await evaluate('state.history.length'), persisted.history);
   await fs.rm(backupPath);
+  await runReleaseChecks({ evaluate, call, until, fixture, requestCount: () => fixtureRequestCount });
+  // Large-preview persistence was checked above. Use readable fixtures for drag
+  // geometry checks and screenshots, avoiding line-wrapping megabytes on each move.
+  await evaluate(`(()=>{state.repeaters=state.repeaters.filter(r=>r.response.length<1000000);state.activeRepeaterId=state.repeaters.find(r=>r.raw.includes('/replay'))?.id||state.repeaters[0].id;
+    state.compare={left:'HTTP/1.1 200 OK\\n\\n{"amount":99}',right:'HTTP/1.1 200 OK\\n\\n{"amount":1}',leftLabel:'Original',rightLabel:'Modified',unified:''};
+    $('#inspectResponse').value='HTTP/1.1 200 OK\\nSet-Cookie: session=fixture; HttpOnly; Secure; SameSite=Lax\\n\\n{"ok":true}';$('#decoderInput').value='{"id":9007199254740993,"active":true}';$('#decoderAction').value='json-pretty';runDecoder();
+    state.selectedHistoryId=state.history.find(e=>e.url.includes('/release-builder'))?.id;renderRepeater();renderHistoryDetail()})()`);
+  await runLayoutCases({ evaluate, call, until });
   assert.deepEqual(exceptions, []);
 
   if (process.argv.includes('--screenshots')) {
@@ -391,9 +405,41 @@ try {
     assert.equal(overflow, false, 'narrow workbench fits the viewport');
     shot = await call('Page.captureScreenshot', { format: 'png' });
     await fs.writeFile('local/screenshots-1.1.0/decoder-narrow.png', Buffer.from(shot.data, 'base64'));
-    for (const view of ['runner', 'collections', 'inspector', 'sitemap', 'builder', 'security', 'websocket', 'workspace']) {
+    for (const view of ['intercept', 'history', 'repeater', 'comparer', 'runner', 'collections', 'inspector', 'sitemap', 'builder', 'security', 'websocket', 'workspace']) {
       await evaluate(`switchView('${view}')`);await delay(100);
       assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, `${view} fits narrow viewport`);
+    }
+  }
+  // All tools must fit the narrow viewport in both themes, even without screenshots.
+  for (const theme of ['light', 'dark']) {
+    await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+    await call('Emulation.setDeviceMetricsOverride', { width: 760, height: 960, deviceScaleFactor: 1, mobile: false });
+    for (const view of ['intercept', 'history', 'repeater', 'comparer', 'decoder', 'sitemap', 'inspector', 'runner', 'collections', 'builder', 'security', 'websocket', 'workspace']) {
+      await evaluate(`switchView('${view}')`);
+      assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, `${view} fits narrow ${theme} viewport`);
+    }
+  }
+  if (process.argv.includes('--store-screenshots')) {
+    const directory = 'local/release-1.1.0/store/screenshots';
+    await fs.mkdir(directory, { recursive: true });
+    await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+    await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+    await evaluate(`addEnvironment('Local demo',${JSON.stringify('baseUrl=' + fixture + '\ntoken=demo-local-token')});$('#builderAssertions').closest('details').open=true;$('#runnerAssertions').value='[{"type":"status","equals":200},{"type":"header","name":"Content-Type","contains":"application/json"}]';$('#runnerMeta').textContent='Finished · 3 requests · 0 errors';`);
+    await evaluate(`$('#inspectResponse').value='';$('#decoderInput').value='{"id":9007199254740993,"active":true}';$('#decoderAction').value='json-pretty';runDecoder();
+      $('#builderMethod').value='POST';$('#builderUrl').value='{{baseUrl}}/api/validate';$('#builderAuth').value='bearer';$('#builderAuthName').value='';$('#builderAuthValue').value='{{token}}';$('#builderAuth').dispatchEvent(new Event('change'));$('#builderHeaders').value='Accept: application/json';$('#builderBodyMode').value='json';$('#builderBody').value='{"amount":99,"currency":"USD"}';$('#builderAssertions').value='[{"type":"status","equals":200},{"type":"header","name":"Content-Type","contains":"application/json"}]';
+      $('#runnerRequest').value=${JSON.stringify(template)};$('#runnerPayloads').value=${JSON.stringify('0\n1\n-1')};workflowState.runner.results=${JSON.stringify(runResults)};workflowState.runner.selectedId=3;workflowState.runner.planned=3;renderRunner();
+      $('#securityFilter').value='all';renderSecurity();`);
+    await evaluate('sendBuilder()');
+    for (const [index, view] of ['intercept', 'builder', 'runner', 'security', 'workspace'].entries()) {
+      if (view === 'intercept') {
+        await evaluate(`(async()=>{$('#tabSelect').value='${fixtureTab}';await attach();state.interceptOn=true;updateStatus();await applyFetch();await cdp('Runtime.evaluate',{expression:${JSON.stringify(`fetch('${fixture}/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"orderId":"demo-1042","amount":99,"currency":"USD"}'})`)}})})()`);
+        await until('state.queue.length > 0');
+      }
+      await evaluate(`switchView('${view}');$('#toast').classList.remove('show')`);
+      await delay(200);
+      const shot = await call('Page.captureScreenshot', { format: 'png' });
+      await fs.writeFile(`${directory}/${index + 1}-${view}.png`, Buffer.from(shot.data, 'base64'));
+      if (view === 'intercept') await evaluate('(async()=>{await releaseAll(false);state.interceptOn=false;await detach()})()');
     }
   }
   await evaluate('(async()=>{workflowState.remember=true;saveWorkspace();await new Promise(r=>setTimeout(r,400))})()');
@@ -401,16 +447,20 @@ try {
   await until('typeof workflowState !== "undefined" && workflowState.collections.length && document.readyState === "complete"');
   assert.equal(await evaluate('workflowState.collections[0].name'), 'Validation cases');
   assert.match(await evaluate('workflowState.variables'), /host=127\.0\.0\.1/);
-  await evaluate('(()=>{switchView("collections");document.querySelector("#collectionOpen").click()})()');
+  await evaluate('(()=>{workflowState.selectedCollectionId=workflowState.collections[0].id;switchView("collections");document.querySelector("#collectionOpen").click()})()');
   assert.match(await evaluate('activeRepeater().raw'), /\{\{payload\}\}/);
   await evaluate('(async()=>{saveWorkspace();await flushLocalSave()})()');
   assert.equal(await evaluate('LocalStore.read().then(data=>data.workspace.collections.length>0)'), true);
   assert.deepEqual(exceptions, []);
   console.log('PASS: intercept/Auto/Repeater, Runner and cancellation, API Builder/auth/assertions, credential comparison, live WebSocket capture, full encrypted backup/restore/reload; no runtime exceptions.');
+} catch (error) {
+  console.error(error.stack);
+  throw error;
 } finally {
   if (fixtureTab) await evaluate(`chrome.tabs.remove(${fixtureTab})`).catch(() => {});
   await call('Page.close').catch(() => {});
   socket.close();
   for (const connection of socketConnections) connection.destroy();
+  server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
 }
