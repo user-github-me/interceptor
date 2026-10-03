@@ -3,6 +3,30 @@
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
+
+function applyShortcutHints(platform) {
+  const mac = /^mac(?:os|intel|intosh)?$/i.test(String(platform || ''));
+  const modifier = mac ? '⌘' : 'Ctrl';
+  const spokenModifier = mac ? 'Command' : 'Control';
+  const ariaModifier = mac ? 'Meta' : 'Control';
+  for (const hint of $$('[data-shortcut]')) {
+    hint.textContent = `${modifier} + ${hint.dataset.shortcut}`;
+    hint.setAttribute('aria-label', `${spokenModifier} + ${hint.dataset.shortcut}`);
+  }
+  for (const button of $$('[data-shortcut-title]')) {
+    button.title = `${modifier} + ${button.dataset.shortcutTitle}`;
+    button.setAttribute('aria-keyshortcuts', `${ariaModifier}+${button.dataset.shortcutTitle}`);
+  }
+}
+
+async function configureShortcutHints() {
+  const fallback = navigator.userAgentData?.platform || navigator.platform || '';
+  applyShortcutHints(fallback);
+  try { applyShortcutHints((await chrome.runtime.getPlatformInfo()).os); }
+  catch { /* the local platform fallback remains visible */ }
+}
+const shortcutHintsReady = configureShortcutHints();
+
 let dashboardPort;
 let closingDashboard = false;
 function connectDashboard() {

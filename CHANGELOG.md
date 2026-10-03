@@ -26,6 +26,7 @@
 
 ### Improved
 
+- Shortcut hints, button tooltips, and accessible shortcut metadata use Command on macOS and Ctrl on Windows/Linux, detected from the browser platform.
 - Refined dark and light themes, navigation, spacing, empty states, keyboard focus, and narrow-screen layouts.
 - JSON display and Decoder formatting preserve large numeric values exactly.
 - JSON and query rewrites preserve unrelated source formatting, encoding, and large numbers.

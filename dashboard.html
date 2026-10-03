@@ -28,7 +28,7 @@
     <button data-view="history" aria-controls="view-history"><span class="nav-icon" aria-hidden="true">≡</span>HTTP History <span id="historyCount" class="count">0</span></button>
     <button data-view="repeater" aria-controls="view-repeater"><span class="nav-icon" aria-hidden="true">↻</span>Repeater</button>
     <button data-view="comparer" aria-controls="view-comparer"><span class="nav-icon" aria-hidden="true">◫</span>Comparer <span id="compareBadge" class="count"></span></button>
-    <button data-view="decoder" aria-controls="view-decoder"><span class="nav-icon" aria-hidden="true">⌘</span>Decoder</button>
+    <button data-view="decoder" aria-controls="view-decoder"><span class="nav-icon" aria-hidden="true">⇆</span>Decoder</button>
     <button data-view="sitemap" aria-controls="view-sitemap"><span class="nav-icon" aria-hidden="true">⌗</span>Site Map <span id="siteMapCount" class="count">0</span></button>
     <button data-view="inspector" aria-controls="view-inspector"><span class="nav-icon" aria-hidden="true">⊙</span>Inspector</button>
     <button data-view="runner" aria-controls="view-runner"><span class="nav-icon" aria-hidden="true">▷</span>Runner</button>
@@ -43,10 +43,10 @@
   <main>
     <!-- ============ INTERCEPT ============ -->
     <section id="view-intercept" class="view active">
-      <div class="view-heading"><div><h1>Intercept</h1><p>Pause traffic. Make your edit. Keep the flow moving.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>forward</b></span></div>
+      <div class="view-heading"><div><h1>Intercept</h1><p>Pause traffic. Make your edit. Keep the flow moving.</p></div><span class="key-hint"><span data-shortcut="Enter">Ctrl + Enter</span> <b>forward</b></span></div>
       <div class="toolbar">
         <button id="interceptToggle" class="toggle">Intercept is OFF</button>
-        <button id="fwdBtn" class="primary" disabled title="Ctrl/&#x2318;+Enter">Forward</button>
+        <button id="fwdBtn" class="primary" disabled data-shortcut-title="Enter" title="Ctrl + Enter">Forward</button>
         <button id="fwdRespBtn" disabled title="Forward this request and pause its response too">Forward + catch response</button>
         <button id="dropBtn" class="danger" disabled>Drop</button>
         <button id="fwdAllBtn" disabled>Forward all</button>
@@ -151,10 +151,10 @@
 
     <!-- ============ REPEATER ============ -->
     <section id="view-repeater" class="view">
-      <div class="view-heading"><div><h1>Repeater</h1><p>Tweak a request and see how your server responds.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>send</b></span></div>
+      <div class="view-heading"><div><h1>Repeater</h1><p>Tweak a request and see how your server responds.</p></div><span class="key-hint"><span data-shortcut="Enter">Ctrl + Enter</span> <b>send</b></span></div>
       <div class="rep-tabs"><div id="repTabList"></div><button id="repNew" title="New repeater tab">+</button></div>
       <div class="toolbar">
-        <button id="repSend" class="primary" title="Ctrl/&#x2318;+Enter">Send</button>
+        <button id="repSend" class="primary" data-shortcut-title="Enter" title="Ctrl + Enter">Send</button>
         <button id="repCancel" disabled>Cancel</button>
         <button id="repImportCurl">Import cURL</button>
         <button id="repDuplicate">Duplicate</button>
@@ -173,7 +173,7 @@
       <details class="assertion-editor"><summary>Response assertions <span class="hint">status, headers, JSON fields, body, time &amp; size</span></summary><textarea id="repAssertions" spellcheck="false" aria-label="Repeater response assertions">[]</textarea><div id="repTests" class="assertion-results" role="status"></div><p class="hint">Example: [{"type":"status","equals":200},{"type":"json","path":"/ok","equals":true}] · JSON Pointer paths · no scripts executed</p></details>
       <div class="split2 grow">
         <div class="pane">
-          <div class="pane-title">Request <span class="hint">edit freely &middot; Ctrl/&#x2318;+Enter to send</span></div>
+          <div class="pane-title">Request <span class="hint">edit freely &middot; <span data-shortcut="Enter">Ctrl + Enter</span> to send</span></div>
           <textarea id="repEditor" spellcheck="false"></textarea>
         </div>
         <div class="pane">
@@ -220,7 +220,7 @@
 
     <!-- ============ DECODER ============ -->
     <section id="view-decoder" class="view">
-      <div class="view-heading"><div><h1>Decoder</h1><p>Turn encoded values into something you can read.</p></div><span class="key-hint">⌘ / Ctrl + Enter <b>transform</b></span></div>
+      <div class="view-heading"><div><h1>Decoder</h1><p>Turn encoded values into something you can read.</p></div><span class="key-hint"><span data-shortcut="Enter">Ctrl + Enter</span> <b>transform</b></span></div>
       <div class="toolbar">
         <select id="decoderAction" aria-label="Transformation">
           <option value="json-pretty">Pretty-print JSON</option>
@@ -237,7 +237,7 @@
           <option value="sha256">SHA-256 hash</option>
           <option value="sha512">SHA-512 hash</option>
         </select>
-        <button id="decoderRun" class="primary">Transform</button>
+        <button id="decoderRun" class="primary" data-shortcut-title="Enter" title="Ctrl + Enter">Transform</button>
         <button id="decoderSwap">Use output as input</button>
         <button id="decoderClear" class="danger">Clear</button>
         <button id="decoderCopy">Copy output</button>
@@ -340,7 +340,7 @@
   </main>
 
   <dialog id="curlDialog" class="workbench-dialog"><form method="dialog"><div class="dialog-title"><h2>Import cURL</h2><button aria-label="Close cURL import">×</button></div></form><p>Paste a single command copied from DevTools. It is parsed locally; importing does not send it.</p><textarea id="curlInput" spellcheck="false" aria-label="cURL command" placeholder="curl 'https://localhost:3000/api/orders' -H 'Accept: application/json'"></textarea><p id="curlError" class="error-text" role="status"></p><button id="curlImportRun" class="primary">Import into Repeater</button></dialog>
-  <dialog id="toolDialog" class="workbench-dialog tool-dialog"><form method="dialog"><div class="dialog-title"><h2>Go to a tool</h2><button aria-label="Close tool switcher">×</button></div></form><input id="toolSearch" placeholder="Search tools…" aria-label="Search workbench tools"><div id="toolList"></div><p class="hint">⌘ / Ctrl + K to open · Esc to close</p></dialog>
+  <dialog id="toolDialog" class="workbench-dialog tool-dialog"><form method="dialog"><div class="dialog-title"><h2>Go to a tool</h2><button aria-label="Close tool switcher">×</button></div></form><input id="toolSearch" placeholder="Search tools…" aria-label="Search workbench tools"><div id="toolList"></div><p class="hint"><span data-shortcut="K">Ctrl + K</span> to open · Esc to close</p></dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="http.js"></script>

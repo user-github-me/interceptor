@@ -88,6 +88,25 @@ try {
   await call('Runtime.enable');
   await call('Page.enable');
   await until('typeof state !== "undefined" && document.readyState === "complete" && state.repeaters.length');
+  const platform = await evaluate('chrome.runtime.getPlatformInfo().then(info=>info.os)');
+  const initialShortcut = await evaluate('(async()=>{await shortcutHintsReady;return document.querySelector("[data-shortcut]").textContent})()');
+  assert.equal(initialShortcut, platform === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter');
+  for (const [os, modifier, ariaModifier] of [['mac', '⌘', 'Meta'], ['win', 'Ctrl', 'Control'], ['linux', 'Ctrl', 'Control'], ['MacIntel', '⌘', 'Meta'], ['macOS', '⌘', 'Meta']]) {
+    const rendered = await evaluate(`(()=>{applyShortcutHints(${JSON.stringify(os)});return {
+      hints:[...document.querySelectorAll('[data-shortcut]')].map(e=>({key:e.dataset.shortcut,text:e.textContent})),
+      buttons:[...document.querySelectorAll('[data-shortcut-title]')].map(e=>({key:e.dataset.shortcutTitle,title:e.title,aria:e.getAttribute('aria-keyshortcuts')})),
+      decoderIcon:document.querySelector('[data-view="decoder"] .nav-icon').textContent
+    }})()`);
+    assert.ok(rendered.hints.every(hint=>hint.text === `${modifier} + ${hint.key}`));
+    assert.ok(rendered.buttons.every(button=>button.title === `${modifier} + ${button.key}` && button.aria === `${ariaModifier}+${button.key}`));
+    assert.notEqual(rendered.decoderIcon, '⌘');
+  }
+  await evaluate(`applyShortcutHints(${JSON.stringify(platform)})`);
+  for (const key of ['ctrlKey', 'metaKey']) {
+    await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',${key}:true,bubbles:true}))`);
+    assert.equal(await evaluate('document.querySelector("#toolDialog").open'), true);
+    await evaluate('document.querySelector("#toolDialog").close()');
+  }
   await evaluate(`chrome.storage.local.set({settings:{...state.settings,autoMode:false,autoInclude:'',autoExclude:''}})`);
   fixtureTab = await evaluate(`(async()=>{
     const tab = await chrome.tabs.create({url:${JSON.stringify(fixture)}});

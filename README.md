@@ -118,7 +118,7 @@ Open the panel to see rewrites in the **Auto log**. Attach to the app's tab to a
 
 Runner uses one origin per run, sends one request at a time, and follows no redirects. It checks literal response text when you supply an expected value. **Stop** cancels the current request and remaining payloads. Missing variables block sending. Collections exports include request text but omit workspace variables; raw requests may still include credentials you pasted.
 
-Use **⌘/Ctrl+K** to jump to any workbench tool.
+Use **Command+K** on macOS or **Ctrl+K** on Windows/Linux to jump to any workbench tool. Shortcut hints and button tooltips follow your system automatically.
 
 ### API requests, tests, and local backups
 
