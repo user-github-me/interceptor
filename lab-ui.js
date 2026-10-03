@@ -4,7 +4,7 @@
    sendRepeater, repeaterBusy, workspaceVariableText, downloadLocal, switchView,
    renderCollections, renderRepeater, renderHistory, renderHistoryDetail,
    renderComparer, renderRunner, renderAutoLog, pruneHistory, historyRequestRaw,
-   historyResponseRaw, openInspector, addCollection, copyText, setRaw */
+   historyResponseRaw, openInspector, addCollection, copyText, setRaw, Layout */
 const labState = {
   ready: false, storageBlocked: false, environments: [], environmentId: null, environmentSeq: 0,
   findings: [], websocketFrames: [], wsSeq: 0, wsSelected: null, interceptDrafts: [],
@@ -35,6 +35,7 @@ function captureWorkspace() {
     format: 'interceptor-backup', version: 1, extensionVersion: chrome.runtime.getManifest().version,
     savedAt: new Date().toISOString(), workspace: {
       settings, fields, history: state.history.map(({ requestId, ...entry }) => entry),
+      layout: Layout.capture(),
       selectedHistoryId: state.selectedHistoryId, seq: state.seq,
       repeaters: state.repeaters.map(({ abort, ...request }) => request), activeRepeaterId: state.activeRepeaterId,
       collections: workflowState.collections, selectedCollectionId: workflowState.selectedCollectionId,
@@ -148,7 +149,7 @@ function recordWorkbenchResponse(request, parsed, result, started) {
   try { if (request.sent) sent = HTTP.parseRequest(request.sent, parsed.url); } catch { /* use prepared request */ }
   const source = request.id === -2 ? 'API Builder' : request.id === -1 ? 'Runner' : [-3, -4].includes(request.id) ? 'Credential comparison' : 'Repeater';
   state.history.push({
-    id: ++state.seq, method: parsed.method, url: result.url || parsed.url,
+    id: ++state.seq, method: sent.method, url: result.url || parsed.url,
     reqHeaders: HTTP.headersToList(sent.headers), reqBody: limitBody(sent.body, 'request body'),
     resHeaders: HTTP.headersToList(response.headers), resBody: limitBody(response.body, 'response body'),
     type: 'Fetch', wallTime: Date.now() - (performance.now() - started), ts: started / 1000,
@@ -218,16 +219,16 @@ function buildApiRequest() {
     body = fields.map((line) => {
       const at = line.indexOf('=');
       if (at < 1) throw new Error('Form fields use name=value, one per line.');
-      return encodeURIComponent(Workflow.interpolate(line.slice(0, at), variables)) + '=' + encodeURIComponent(Workflow.interpolate(line.slice(at + 1), variables));
+      return Workflow.encodeFormTemplate(line.slice(0, at)) + '=' + Workflow.encodeFormTemplate(line.slice(at + 1));
     }).join('&');
     contentType = 'application/x-www-form-urlencoded';
   }
   if (contentType && !/^content-type:/im.test(headers)) headers = [headers, 'Content-Type: ' + contentType].filter(Boolean).join('\n');
   const assertions = $('#builderAssertions').value;
   Lab.parseAssertions(assertions);
-  const raw = `${$('#builderMethod').value} ${urlText} HTTP/1.1\n${headers}\n\n${body}`;
+  const raw = `${$('#builderMethod').value} ${urlText} HTTP/1.1${headers ? '\n' + headers : ''}\n\n${body}`;
   const prepared = Workflow.prepareRequest(raw, url.origin, variableText);
-  if (prepared.raw.length > 500_000) throw new Error('Builder requests are limited to 500,000 characters.');
+  if (raw.length > 500_000 || prepared.raw.length > 500_000) throw new Error('Builder requests are limited to 500,000 draft and expanded characters.');
   return { raw, target: prepared.target, follow: false, assertions };
 }
 
@@ -329,6 +330,7 @@ async function applyBackup(workspace) {
   labState.ready = false;
   try { restoreWorkspace(workspace, true); }
   finally { labState.ready = true; }
+  if (workspace.layout) await Layout.restore(workspace.layout);
   labState.storageBlocked = false;
   saveSettings(); saveRepeaters();
   await flushLocalSave();
@@ -336,6 +338,7 @@ async function applyBackup(workspace) {
 }
 
 async function bindLab() {
+  await Layout.ready;
   state.settings.repRemember = true;
   workflowState.remember = true;
   state.settings.workspaceRemember = true;
@@ -349,6 +352,7 @@ async function bindLab() {
   $('#workspaceRemember').checked = true;
   $('#repAssertions').addEventListener('input', (event) => { const r = activeRepeater(); if (r) r.assertions = event.target.value; });
   for (const id of draftFields) { const input = $('#' + id); if (input?.tagName === 'TEXTAREA' || input?.tagName === 'INPUT' && input.type !== 'checkbox') input.maxLength = 1_000_000; }
+  $('#inspectResponse').maxLength = 4_100_000;
   for (const id of ['repAssertions', 'runnerAssertions', 'builderAssertions', 'collectionAssertions', 'environmentVariables']) $('#' + id).maxLength = 100_000;
   $('#repEditor').maxLength = 1_000_000;
   $('#collectionAssertions').addEventListener('input', (event) => { const r = workflowState.collections.find((item) => item.id === workflowState.selectedCollectionId); if (r) r.assertions = event.target.value; });
@@ -400,7 +404,9 @@ async function bindLab() {
   $('#recoveredDrafts').addEventListener('click', (event) => { const action = event.target.closest('[data-draft]'); const draft = labState.interceptDrafts[Number(action?.dataset.draft)]; if (draft) { $('#decoderInput').value = draft.raw; switchView('decoder'); } });
   $('#backupDownload').addEventListener('click', async () => {
     try {
-      const backup = await flushLocalSave();
+      // Keep export available when disk storage fails: this is the recovery path.
+      const backup = captureWorkspace();
+      if (!labState.storageBlocked) await flushLocalSave().catch(() => {});
       const password = $('#backupPassword').value;
       const output = password ? await Lab.encryptBackup(backup, password) : backup;
       downloadLocal(JSON.stringify(output), `interceptor-workspace-${new Date().toISOString().slice(0, 10)}${password ? '-encrypted' : ''}.json`);

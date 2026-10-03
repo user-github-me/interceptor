@@ -47,7 +47,10 @@
       if (!line.trim()) continue;
       const i = line.indexOf(':');
       if (i <= 0) throw new Error(`Invalid header line: "${line}" (expected "Name: value")`);
-      headers.push({ name: line.slice(0, i).trim(), value: line.slice(i + 1).trim() });
+      const name = line.slice(0, i).trim();
+      const value = line.slice(i + 1).trim();
+      if (!/^[!#$%&'*+.^_`|~\w-]+$/.test(name) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new Error(`Invalid HTTP header: "${name}"`);
+      headers.push({ name, value });
     }
     return headers;
   }
@@ -475,11 +478,18 @@
         const complete = req.postDataEntries.every((e) => typeof e.bytes === 'string');
         const bytes = concatBytes(req.postDataEntries.map((e) => (e.bytes ? b64ToBytes(e.bytes) : new Uint8Array())));
         const d = decodeBody(bytes);
-        return { text: d.binary ? '' : d.text, known: complete && !d.binary };
-      } catch { return { text: '', known: false }; }
+        return { text: complete && !d.binary ? d.text : '', known: complete && !d.binary, binary: d.binary, size: d.size };
+      } catch { return { text: '', known: false, binary: false }; }
     }
-    if (typeof req.postData === 'string') return { text: req.postData, known: true };
-    return { text: '', known: !req.hasPostData };
+    if (typeof req.postData === 'string') return { text: req.postData, known: true, binary: false };
+    return { text: '', known: !req.hasPostData, binary: false };
+  }
+
+  /** Display placeholders describe unavailable bytes and must never become a payload. */
+  function isUnavailableRequestBody(body) {
+    return /^\[binary request body\b/.test(String(body || '')) ||
+      /^\[request body unavailable\b/.test(String(body || '')) ||
+      /\n?\[… request body truncated;/.test(String(body || ''));
   }
 
   const STATIC_TYPES = new Set(['Image', 'Font', 'Stylesheet', 'Media']);
@@ -518,7 +528,7 @@
     REASONS, norm, headersToList, getHeader, serializeRequest, parseRequest,
     serializeResponse, parseResponse, statusText, bytesToB64, b64ToBytes, utf8ToB64,
     concatBytes, decodeBody, formatJson, prettyBody, toCurl, applyParamRule, applyParamRules,
-    splitNames, splitPatterns, compileUrlPattern, urlInScope, DEFAULT_PARAMS, isStatic, requestBodyText,
+    splitNames, splitPatterns, compileUrlPattern, urlInScope, DEFAULT_PARAMS, isStatic, requestBodyText, isUnavailableRequestBody,
   };
   global.HTTP = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

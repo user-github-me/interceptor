@@ -36,8 +36,9 @@ in the browser profile’s IndexedDB database (`interceptor-workspace`). This co
 - Auto logs, security observations and review status, WebSocket frame previews;
 - recoverable text from paused edits, without restarting those paused sessions.
 
-Settings and Auto-mode rules also use `chrome.storage.local`; session tab IDs and
-temporary header rule IDs use `chrome.storage.session`. Earlier saved drafts and
+Settings, Auto-mode rules and pane-size preferences also use `chrome.storage.local`.
+Pane sizes are included in full backups. Session tab IDs and temporary header
+rule IDs use `chrome.storage.session`. Earlier saved drafts and
 Collections are migrated when the workbench opens. No workspace data uses browser
 sync or a remote server. Local records are protected by your computer/browser
 profile access controls; the extension does not separately encrypt its database.

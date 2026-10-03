@@ -70,6 +70,7 @@ integration harness starts its own HTTP and WebSocket fixtures:
 
 ```bash
 node tests/browser-integration.mjs http://127.0.0.1:9226
+node tests/browser-popup.mjs http://127.0.0.1:9226 --screenshots
 ```
 
 First launch an isolated Chromium browser with the unpacked extension loaded and
@@ -120,7 +121,8 @@ expected and actual behavior, and a small local fixture when possible. Use
 synthetic or redacted requests, logs, screenshots, and backups. For feature
 requests, describe who benefits and how a reviewer could verify the result.
 
-Issues #2–#8 track the current v1.1 feature groups; #9 tracks this contribution
-workflow. They are linked to [PR #1](https://github.com/user-github-me/interceptor/pull/1)
-and stay open while the implementation is under review. Open separate issues for
-follow-up work so contributors can find a clear, unclaimed task.
+The initial v1.1 feature groups and contribution workflow merged in
+[PR #1](https://github.com/user-github-me/interceptor/pull/1); its linked issues are
+closed. Open separate issues for follow-up work so contributors can find a clear,
+unclaimed task. GitHub closes linked issues when the implementing PR merges into
+the default branch with a `Closes #number` reference.

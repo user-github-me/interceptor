@@ -13,6 +13,20 @@ test('variables preserve literal values, reject missing names, and validate targ
   assert.throws(() => Workflow.variablesFromText('not a variable'), /line 1/);
 });
 
+test('encoded form templates preserve environments and encode separators at send time', () => {
+  const form = Workflow.encodeFormTemplate('literal &= {{ token }} / {{other}}');
+  assert.equal(form, 'literal%20%26%3D%20{{url:token}}%20%2F%20{{url:other}}');
+  assert.equal(Workflow.interpolate(form, Workflow.variablesFromText('token=a&b\nother=é')), 'literal%20%26%3D%20a%26b%20%2F%20%C3%A9');
+  assert.throws(() => Workflow.interpolate('{{url:missing}}', {}), /Missing variables/);
+});
+
+test('sending captured binary or unavailable request previews is blocked', () => {
+  for (const body of ['[request body unavailable — original bytes were not captured]', '[binary request body, 12 B — not shown]', 'prefix\n[… request body truncated; 800 KB total]']) {
+    assert.throws(() => Workflow.prepareRequest('POST / HTTP/1.1\nContent-Type: application/octet-stream\n\n' + body, 'https://example.test'), /not captured completely/);
+  }
+  assert.equal(Workflow.prepareRequest('POST / HTTP/1.1\n\noriginal bytes', 'https://example.test').parsed.body, 'original bytes');
+});
+
 test('cURL import round-trips quoted headers and body without executing shell text', () => {
   const original = { method: 'POST', url: 'https://example.test/pay?a=1&b=2', headers: [{ name: 'X-Test', value: "it's literal" }, { name: 'Content-Type', value: 'application/json' }], body: '{"amount":1}' };
   const imported = Workflow.importCurl(HTTP.toCurl(original));

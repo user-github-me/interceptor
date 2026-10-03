@@ -4,6 +4,8 @@
 
 ### Added
 
+- Draggable, keyboard-accessible dividers across split tools, with separate wide/stacked sizes saved locally, full-backup support, and layout reset.
+- Reproducible runtime-only ZIP and signed CRX packaging with signature, identity, payload and checksum verification.
 - Site Map grouped by origin, method, and path with counts, statuses, average timings, query fields, History links, and endpoint export.
 - Inspector for repeated query/form fields, exact JSON values, cookies, response headers, and cookie attributes.
 - Payload Runner with sequential sends, delays, timeouts, stop/cancel, response-text checks, result comparison, replay, and CSV export.
@@ -39,6 +41,14 @@
 
 ### Fixed
 
+- Canceling Chrome's debugging banner disables Auto before releasing the tab.
+- Unavailable captured upload bodies cannot be silently replayed; header-only response edits retain original CRLF bytes.
+- Repeater follows redirects with accurate final URL, method, and sent-body history.
+- API Builder raw bodies have no added newline when headers are empty; malformed headers block sending.
+- Imported Postman and saved Builder forms retain environment variables with correct URL encoding.
+- Assertions reject precision-losing numeric values, handle duplicate headers, and avoid false passes from incomplete response previews.
+- Large Comparer/Inspector/Decoder data survives backup validation; backup export works after disk-save failures.
+- Collection imports preflight environment capacity, Runner checks expanded request size, and malformed backup metadata is rejected before replacement.
 - Runner waits for header-rule cleanup after each request, including cancellation and timeout.
 - Missing variables and unsupported cURL options block sending/importing.
 - Runner sends at most 50 payloads to one origin, with capped previews.

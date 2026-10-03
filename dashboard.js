@@ -41,7 +41,7 @@ const MAX_HISTORY = 2500;
 const MAX_BODY_CHARS = 750_000;         // characters kept per captured body
 const MAX_HISTORY_CHARS = 64_000_000;   // approximate total text budget
 const MAX_REPEATER_BYTES = 4_000_000;
-const MAX_DISPLAY_CHARS = 1_000_000;    // bodies rendered in <pre>
+const MAX_DISPLAY_CHARS = 200_000;      // bounded visible preview; copy/export retains stored text
 const STATIC_TYPES = new Set(['Image', 'Font', 'Stylesheet', 'Media']);
 const STATIC_EXT = /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp|css|woff2?|ttf|otf|eot|mp4|webm|mp3|wav|ogg|map)$/i;
 const STD_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT'];
@@ -186,15 +186,7 @@ function setRaw(pre, text) {
 
 /** Body of a CDP Network.Request / Fetch request. */
 function requestBodyFromCdp(req) {
-  if (req.postDataEntries && req.postDataEntries.length) {
-    const complete = req.postDataEntries.every((e) => typeof e.bytes === 'string');
-    const bytes = HTTP.concatBytes(req.postDataEntries.map((e) => (e.bytes ? HTTP.b64ToBytes(e.bytes) : new Uint8Array())));
-    const d = HTTP.decodeBody(bytes);
-    if (d.binary) return { text: '', known: false, binary: true, size: d.size };
-    return { text: complete ? d.text : '', known: complete, binary: false };
-  }
-  if (typeof req.postData === 'string') return { text: req.postData, known: true, binary: false };
-  return { text: '', known: !req.hasPostData, binary: false };
+  return HTTP.requestBodyText(req);
 }
 
 // ======================================================================
@@ -339,13 +331,24 @@ async function detach() {
 }
 
 function onDetached(reason) {
+  if (!state.attached) return;
   const tabId = state.tabId;
   state.attached = false;
+  state.tabId = null;
   state.queue = [];
   state.selectedQueueId = null;
   state.forceResponse.clear();
   netMap.clear();
-  if (tabId != null) releaseTab(tabId); // let Auto mode reclaim the tab
+  // Chrome's Cancel button is an explicit stop; disable Auto before handing
+  // ownership back so the worker cannot immediately reattach the same tab.
+  if (reason === 'canceled_by_user') {
+    state.settings.autoMode = false;
+    queueLocalSave();
+    const settings = { ...state.settings, autoMode: false };
+    delete settings.autoTabId;
+    chrome.storage.local.set({ settings })
+      .then(() => tabId != null && releaseTab(tabId)).catch(() => {});
+  } else if (tabId != null) releaseTab(tabId); // let Auto mode reclaim the tab
   renderQueue();
   loadEditor();
   updateStatus();
@@ -531,8 +534,11 @@ async function onRequestPaused(p) {
   const historyRequest = isResponse ? netMap.get(p.networkId) : null;
   const editableBody = reqBody.known && !reqBody.binary && !reqBodyTooLarge && reqBody.text
     ? reqBody.text
-    : isResponse && historyRequest && !/^\[binary request body/.test(historyRequest.reqBody || '') && !/\[… request body truncated/.test(historyRequest.reqBody || '')
+    : isResponse && historyRequest && historyRequest.reqBodyComplete !== false && !HTTP.isUnavailableRequestBody(historyRequest.reqBody)
       ? historyRequest.reqBody : '';
+  item.requestBodyComplete = isResponse && historyRequest
+    ? historyRequest.reqBodyComplete !== false && !HTTP.isUnavailableRequestBody(historyRequest.reqBody)
+    : reqBody.known && !reqBody.binary && !reqBodyTooLarge;
   item.requestRaw = HTTP.serializeRequest({
     method: req.method,
     url: req.url,
@@ -774,7 +780,9 @@ function buildRelease(item, catchResponse = false) {
   if (isUnchanged(item)) return { method: 'Fetch.continueRequest', params: { requestId: item.id }, edited: false };
   const r = HTTP.parseResponse(item.raw);
   const bodyChanged = HTTP.norm(r.body) !== HTTP.norm(item.originalBody);
-  const body = !bodyChanged && item.originalBodyB64 != null ? item.originalBodyB64 : HTTP.utf8ToB64(r.body);
+  const body = !bodyChanged
+    ? item.originalBodyB64 ?? HTTP.utf8ToB64(item.originalBody)
+    : HTTP.utf8ToB64(r.body);
   const params = {
     requestId: item.id,
     responseCode: r.status,
@@ -906,7 +914,8 @@ function onRequestWillBeSent(p) {
     method: p.request.method,
     url: p.request.url,
     reqHeaders: HTTP.headersToList(p.request.headers),
-    reqBody: body.binary ? `[binary request body, ${fmtSize(body.size)}]` : limitBody(body.text, 'request body'),
+    reqBody: body.binary ? `[binary request body, ${fmtSize(body.size)}]` : !body.known ? '[request body unavailable: full upload bytes were not captured]' : limitBody(body.text, 'request body'),
+    reqBodyComplete: body.known && !body.binary && body.text.length <= MAX_BODY_CHARS,
     type: p.type || 'Other',
     wallTime: p.wallTime ? p.wallTime * 1000 : Date.now(),
     ts: p.timestamp,
@@ -918,7 +927,15 @@ function onRequestWillBeSent(p) {
   if (x) { e.reqHeaders = HTTP.headersToList(x.headers); e.reqExtra = true; extraReq.delete(p.requestId); }
   if (!body.known && !body.binary) {
     cdp('Network.getRequestPostData', { requestId: p.requestId }).then((r) => {
-      e.reqBody = limitBody(r.base64Encoded ? HTTP.decodeBody(HTTP.b64ToBytes(r.postData)).text : r.postData, 'request body');
+      // CDP omits file bytes from multipart post data. A fallback string is not
+      // proof that an upload with missing entries was captured completely.
+      const ct = HTTP.getHeader(e.reqHeaders, 'content-type') || '';
+      const missingEntry = p.request.postDataEntries?.some((entry) => typeof entry.bytes !== 'string');
+      if (missingEntry || /^multipart\//i.test(ct)) return;
+      const recovered = r.base64Encoded ? HTTP.decodeBody(HTTP.b64ToBytes(r.postData)) : { text: r.postData, binary: false };
+      if (recovered.binary || typeof recovered.text !== 'string') return;
+      e.reqBody = limitBody(recovered.text, 'request body');
+      e.reqBodyComplete = recovered.text.length <= MAX_BODY_CHARS;
       pruneHistory();
       touchHistory(e);
     }).catch(() => {});
@@ -1012,7 +1029,10 @@ function markHistoryEdited(item, rel) {
     e.method = rel.parsed.method;
     e.url = rel.parsed.url;
     e.reqHeaders = [{ name: 'Host', value: new URL(rel.parsed.url).host }, ...rel.parsed.headers];
-    if (rel.bodyChanged) e.reqBody = rel.parsed.body;
+    if (rel.bodyChanged) {
+      e.reqBody = limitBody(rel.parsed.body, 'request body');
+      e.reqBodyComplete = rel.parsed.body.length <= MAX_BODY_CHARS;
+    }
   } else {
     e.note = 'response edited';
   }
@@ -1186,6 +1206,7 @@ async function importHarFile(file) {
     renderHistory();
     renderHistoryDetail();
     toast(`Imported ${imported.length} request${imported.length === 1 ? '' : 's'} from ${file.name}.`);
+    queueLocalSave();
   } catch (error) {
     toast(`HAR import failed: ${error.message}`, 'error');
   } finally {
@@ -1391,7 +1412,7 @@ function newRepeater({ raw = DEFAULT_RAW, target = 'http://localhost:3000', foll
 
 function sendToRepeater(raw, url) {
   const parsed = HTTP.parseRequest(raw, url);
-  if (/^\[binary request body/.test(parsed.body) || /\[… request body truncated/.test(parsed.body)) {
+  if (HTTP.isUnavailableRequestBody(parsed.body)) {
     return toast('This request body was not captured completely. Create a Repeater request with the original payload to replay it.', 'error');
   }
   let target = 'http://localhost:3000';
@@ -1539,11 +1560,13 @@ async function sendRepeater(r, options = {}) {
   try {
     assertions = Lab.parseAssertions(r.assertions || '[]');
     const prepared = options.prepared || Workflow.prepareRequest(r.raw, r.target.trim() || 'http://localhost', workspaceVariableText(), options.extra || {});
+    if (r.raw.length > 1_000_000 || prepared.raw.length > 1_100_000) throw new Error('Repeater requests are limited to 1 million draft characters and 1.1 million expanded characters.');
     target = new URL(prepared.target);
     p = prepared.parsed;
   } catch (e) {
     r.response = '';
     r.meta = '';
+    r.tests = [];
     if (!options.quiet) {
       renderRepeaterResponse();
       $('#repResponse').innerHTML = `<span class="s5">${escapeHtml(e.message)}</span>`;
@@ -1622,7 +1645,7 @@ async function sendRepeater(r, options = {}) {
     if (res.type === 'opaqueredirect' && !capture.statusLine) statusLine = 'HTTP/1.1 3xx (redirect — enable "Follow redirects" to follow it)';
     r.response = statusLine + '\n' + HTTP.headersToList(headers).map((h) => `${h.name}: ${h.value}`).join('\n') + '\n\n' + bodyText;
     r.meta = `${status} · ${fmtMs(ms)} · ${read.truncated ? '>' : ''}${fmtSize(read.received)}${warnings.length ? ' · ⚠ ' + warnings.join('; ') : ''}`;
-    result = { status, duration: ms, bytes: read.received, truncated: read.truncated, error: '', url: url.href };
+    result = { status, duration: ms, bytes: read.received, truncated: read.truncated, error: '', url: res.url || capture.sentUrl || url.href };
   } catch (e) {
     r.response = '';
     r.meta = warnings.length ? '⚠ ' + warnings.join('; ') : '';
@@ -1637,7 +1660,7 @@ async function sendRepeater(r, options = {}) {
       const sent = new URL(capture.sentUrl);
       r.sent = `${capture.sentMethod} ${sent.pathname}${sent.search} HTTP/1.1\nHost: ${sent.host}\n` +
         capture.sentHeaders.filter((h) => h.name.toLowerCase() !== 'host').map((h) => `${h.name}: ${h.value ?? ''}`).join('\n') +
-        '\n\n' + (noBody ? '' : p.body);
+        '\n\n' + (['GET', 'HEAD'].includes(capture.sentMethod) ? '' : p.body);
     }
     pendingCaptures.delete(capture);
     await removeHeaderRule(rule.id);
@@ -1710,7 +1733,13 @@ function bindUi() {
   $('#fwdAllBtn').addEventListener('click', () => releaseAll(true));
   $('#toRepeaterFromIntercept').addEventListener('click', () => {
     const c = currentItem();
-    if (c) sendToRepeater(c.stage === 'request' ? c.raw : c.requestRaw, c.url);
+    if (!c) return;
+    const raw = c.stage === 'request' ? c.raw : c.requestRaw;
+    const body = HTTP.parseRequest(raw, c.url).body;
+    if (c.requestBodyComplete === false && (c.stage === 'response' || HTTP.norm(body) === HTTP.norm(c.originalBody))) {
+      return toast('The original upload was not captured completely. Enter the original payload in Repeater to replay it.', 'error');
+    }
+    sendToRepeater(raw, c.url);
   });
   $('#interceptEditor').addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); const c = currentItem(); if (c) forwardItem(c); }

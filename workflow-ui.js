@@ -193,6 +193,7 @@ async function startRunner() {
     payloads = Workflow.payloadsFromText($('#runnerPayloads').value);
     const variables = workspaceVariableText();
     requests = payloads.map((payload) => Workflow.prepareRequest(template, target, variables, { payload }));
+    if (requests.some((request) => request.raw.length > 200_000)) throw new Error('Expanded Runner requests are limited to 200,000 characters.');
     const origins = new Set(requests.map((request) => new URL(request.parsed.url).origin));
     if (origins.size !== 1) throw new Error('All payloads must use the same origin. Put the marker in a path, field, or header.');
   } catch (error) { return toast(error.message, 'error'); }
@@ -384,6 +385,7 @@ async function bindWorkflow() {
       const requests = postman ? postman.requests : Workflow.importCollection(data);
       if (requests.length + workflowState.collections.length > 100) throw new Error('Import would exceed 100 saved requests.');
       if ([...requests, ...workflowState.collections].reduce((n, request) => n + request.raw.length, 0) > 5_000_000) throw new Error('Import would exceed the collection text limit.');
+      if (postman?.variables && labState.environments.length >= 50) throw new Error('Import needs an environment. Remove an existing environment before importing (50 maximum).');
       for (const request of requests) workflowState.collections.push({ ...request, id: ++workflowState.collectionSeq });
       if (postman?.variables) addEnvironment(String(data.info.name || 'Postman').slice(0, 100), postman.variables);
       workflowState.selectedCollectionId = workflowState.collections.at(-1)?.id || null;

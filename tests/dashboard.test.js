@@ -45,3 +45,64 @@ test('manual query edits preserve omitted uploads and explicit body edits still 
   item.raw += 'replacement';
   assert.equal(atob(context.buildRelease(item).params.postData), 'replacement');
 });
+
+test('header-only response edits preserve original CRLF body bytes', () => {
+  const { context } = forwardingHarness();
+  const item = {
+    id: 'response', stage: 'response', originalBodyB64: null, originalBody: 'first\r\nsecond\r\n',
+    originalRaw: 'HTTP/1.1 200 OK\nX-Test: old\n\nfirst\nsecond\n',
+    raw: 'HTTP/1.1 200 OK\nX-Test: new\n\nfirst\nsecond\n',
+  };
+  const release = context.buildRelease(item);
+  assert.equal(atob(release.params.body), item.originalBody);
+  item.raw = item.raw.replace('second', 'changed');
+  assert.equal(atob(context.buildRelease(item).params.body), 'first\nchanged\n');
+});
+
+test('canceling dashboard debugging disables Auto before releasing the tab', async () => {
+  const events = [];
+  let persist;
+  const state = { attached: true, tabId: 17, settings: { autoMode: true, autoTabId: 17 }, queue: [], forceResponse: new Set() };
+  const context = vm.createContext({
+    state, netMap: new Map(), queueLocalSave: () => {},
+    chrome: { storage: { local: { set: (data) => { events.push(data); return new Promise((resolve) => { persist = resolve; }); } } } },
+    releaseTab: async (tabId) => { events.push({ released: tabId }); },
+    renderQueue: () => {}, loadEditor: () => {}, updateStatus: () => {}, toast: () => {},
+  });
+  vm.runInContext(source.slice(source.indexOf('function onDetached('), source.indexOf('function updateStatus()')), context);
+  context.onDetached('canceled_by_user');
+  assert.equal(state.attached, false);
+  assert.equal(state.settings.autoMode, false);
+  assert.equal(events.length, 1, 'ownership remains claimed until Auto is disabled in storage');
+  assert.equal(events[0].settings.autoMode, false);
+  assert.equal(Object.hasOwn(events[0].settings, 'autoTabId'), false);
+  persist();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events[1], { released: 17 });
+  context.onDetached('canceled_by_user');
+  assert.equal(events.length, 2, 'duplicate detach notifications do not release a newer session');
+});
+
+test('history marks unavailable upload bytes and never treats multipart fallback as complete', async () => {
+  const state = { history: [], seq: 0 };
+  const context = vm.createContext({
+    HTTP, state, netMap: new Map(), extraReq: new Map(), MAX_BODY_CHARS: 750_000,
+    requestBodyFromCdp: HTTP.requestBodyText, limitBody: (text) => String(text || ''), fmtSize: (size) => String(size),
+    cdp: async () => ({ postData: 'partial multipart text without file bytes' }),
+    pruneHistory: () => {}, scheduleHistoryRender: () => {}, touchHistory: () => {},
+  });
+  vm.runInContext(source.slice(source.indexOf('function onRequestWillBeSent('), source.indexOf('function onRequestExtra(')), context);
+  context.onRequestWillBeSent({ requestId: 'upload', timestamp: 1, request: {
+    method: 'POST', url: 'https://example.test/upload', hasPostData: true,
+    headers: { 'Content-Type': 'multipart/form-data; boundary=fixture' }, postDataEntries: [{ bytes: btoa('field') }, {}],
+  } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.history[0].reqBodyComplete, false);
+  assert.equal(HTTP.isUnavailableRequestBody(state.history[0].reqBody), true);
+  context.onRequestWillBeSent({ requestId: 'text', timestamp: 2, request: {
+    method: 'POST', url: 'https://example.test/text', hasPostData: true, headers: { 'Content-Type': 'text/plain' },
+  } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(state.history[1].reqBodyComplete, true);
+  assert.equal(state.history[1].reqBody, 'partial multipart text without file bytes');
+});
