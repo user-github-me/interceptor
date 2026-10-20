@@ -1,18 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Interceptor - HTTP Proxy for Web Devs",
+  "name": "Interceptor - HTTP & API Testing",
   "short_name": "Interceptor",
-  "version": "1.1.0",
-  "description": "Inspect HTTP/WebSockets, test APIs, review security, and back up your local workspace. Includes Repeater, Runner and collections.",
+  "version": "1.1.1",
+  "description": "Inspect browser traffic, test APIs, review security evidence, and save requests, history, and encrypted backups locally.",
   "permissions": [
     "debugger",
-    "tabs",
     "storage",
     "webRequest",
     "declarativeNetRequestWithHostAccess",
     "clipboardWrite"
   ],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js"
   },

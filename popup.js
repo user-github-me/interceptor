@@ -1,5 +1,5 @@
 'use strict';
-/* global HTTP */
+/* global HTTP, Disclosure */
 const $ = (s) => document.querySelector(s);
 const defaultRules = () => [{ param: HTTP.DEFAULT_PARAMS, value: '1' }];
 let settings = {
@@ -100,6 +100,7 @@ function renderScopeFields() {
 
 // ---- persistence ----
 async function save() {
+  if (!await Disclosure.accepted()) return;
   try {
     const { settings: cur } = await chrome.storage.local.get('settings');
     const merged = {
@@ -118,7 +119,8 @@ async function save() {
   refreshStatus();
 }
 
-function setScope(scope) {
+async function setScope(scope) {
+  if (scope !== 'off' && !await Disclosure.accepted() && !await Disclosure.require({ closeLabel: 'Close popup' })) return;
   if (scope !== 'off' && !validateScope()) return;
   if (scope === 'off') { settings.autoMode = false; settings.autoTabId = null; }
   else if (scope === 'tab') {
@@ -183,6 +185,7 @@ async function findActiveTab() {
 }
 
 (async function init() {
+  if (!await Disclosure.require({ closeLabel: 'Close popup' })) return;
   try {
     const [{ settings: stored }, session] = await Promise.all([
       chrome.storage.local.get('settings'),
@@ -206,6 +209,7 @@ async function findActiveTab() {
   });
   $('#resetRules').addEventListener('click', () => { settings.autoRules = defaultRules(); save(); renderRules(); });
   $('#openPanel').addEventListener('click', openPanel);
+  $('#openHelp').addEventListener('click', () => Disclosure.showHelp());
   for (const [selector, key] of [['#autoInclude', 'autoInclude'], ['#autoExclude', 'autoExclude']]) {
     $(selector).addEventListener('input', (e) => {
       settings[key] = e.target.value;
@@ -216,6 +220,9 @@ async function findActiveTab() {
 
   // Reflect edits made elsewhere (e.g. the panel) while the popup is open.
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.localDataDisclosure) {
+      Disclosure.accepted().then((accepted) => { if (!accepted) location.reload(); });
+    }
     if (area === 'local' && changes.settings && document.activeElement === document.body) {
       settings = normalize(changes.settings.newValue, settings.autoTabId);
       renderRules();

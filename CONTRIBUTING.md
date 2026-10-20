@@ -27,9 +27,9 @@ Read [README.md](README.md), [PRIVACY.md](PRIVACY.md), and
    actually performed. Maintainer review and merge complete the issue.
 
 Do not push directly to `main`. Do not merge, tag a release, or publish to the
-Chrome Web Store as part of a contribution. The pending upgrade stays at
-**1.1.0** until it is published; follow the release version instructions in
-[AGENTS.md](AGENTS.md).
+Chrome Web Store as part of a contribution. The published release is **1.1.0**;
+the approved next update is **1.1.1**. Keep related unpublished work at that
+version and follow the release instructions in [AGENTS.md](AGENTS.md).
 
 ## Local setup
 

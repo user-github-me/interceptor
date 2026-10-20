@@ -11,6 +11,9 @@
 .workspace-card .toolbar.small { flex-wrap:wrap; }
 .builder-form input, .workspace-card input, .workspace-card select { width:100%; min-width:0; box-sizing:border-box; }
 .builder-form textarea { flex:none; min-height:96px; border:1px solid var(--border); border-radius:8px; }
+.builder-form #builderHeaders { min-height:56px; height:56px; }
+.builder-form #builderBody { min-height:72px; height:72px; }
+.builder-form .single-auth-field { grid-template-columns:minmax(0,1fr); }
 .builder-form label input { display:block; margin-top:7px; }
 .builder-form .lab-grid label { min-width:0; }
 .assertion-editor, .auth-comparison { border:1px solid var(--border); border-radius:10px; margin:0 0 12px; padding:10px 14px; flex-shrink:0; }
@@ -34,10 +37,11 @@ summary { cursor:pointer; font-size:12px; font-weight:600; }
 .workspace-card h2 { font-size:16px; margin:0 0 12px; }
 .workspace-card p { font-size:12px; line-height:1.7; color:var(--text-muted); }
 .workspace-card label { display:block; margin:12px 0 7px; }
-.workspace-counts { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:20px 0; }
+.workspace-counts { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:14px 0; }
 .workspace-counts span { display:block; padding:10px; border:1px solid var(--border); border-radius:8px; color:var(--text-muted); font-size:11px; }
 .workspace-counts b { display:block; color:var(--text); font-size:20px; margin-bottom:4px; }
 .environment-card { grid-column:1/-1; }
+@media(min-width:1100px) { .workspace-counts { grid-template-columns:repeat(6,minmax(0,1fr)); } .workspace-counts span { padding:8px; } .workspace-counts b { font-size:18px; } }
 .environment-card textarea { min-height:160px; width:100%; box-sizing:border-box; font-family:var(--mono); }
 #backupPreview { border-top:1px solid var(--border); margin-top:12px; padding-top:8px; }
 #wsTable td { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

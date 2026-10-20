@@ -16,8 +16,9 @@ test('closing a dashboard while a header rule installs cleans it after installat
   const event = (name) => ({ addListener: (fn) => { listeners[name] = fn; } });
   const origin = 'chrome-extension://fixture/';
   let tabOpen = true;
-  const context = vm.createContext({ HTTP, importScripts: () => {}, chrome: {
+  const context = vm.createContext({ HTTP, URL, Disclosure: { accepted: async () => true }, importScripts: () => {}, chrome: {
     runtime: {
+      id: 'fixture',
       getURL: (path) => origin + path,
       onConnect: event('connect'), onMessage: event('message'),
       onInstalled: event('installed'), onStartup: event('startup'),
@@ -51,9 +52,13 @@ test('closing a dashboard while a header rule installs cleans it after installat
   vm.runInContext(fs.readFileSync(require.resolve('../background.js'), 'utf8'), context);
   await vm.runInContext('ready', context);
   let disconnect;
-  listeners.connect({ name: 'dashboard', onDisconnect: { addListener: (fn) => { disconnect = fn; } } });
+  const sender = { id: 'fixture', url: origin + 'dashboard.html', frameId: 0, tab: { id: 1 } };
+  listeners.connect({ name: 'dashboard', sender, onDisconnect: { addListener: (fn) => { disconnect = fn; } } });
   const response = new Promise((resolve) => listeners.message(
-    { type: 'setRepeaterRule', rule: { id: 1001 } }, { tab: { id: 1 } }, resolve,
+    { type: 'setRepeaterRule', rule: {
+      id: 1001, priority: 1, action: { type: 'modifyHeaders', requestHeaders: [{ header: 'cookie', operation: 'set', value: 'fixture=local' }] },
+      condition: { tabIds: [1], resourceTypes: ['xmlhttprequest'], urlFilter: '|https://example.test/api|', requestMethods: ['get'] },
+    } }, sender, resolve,
   ));
   await started;
   tabOpen = false;

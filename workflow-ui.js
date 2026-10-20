@@ -15,7 +15,7 @@ const workspaceVariableText = () => workflowState.variables + '\n' + (labState.e
 
 function downloadLocal(text, name, type = 'application/json') {
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([text], { type }));
+  link.href = URL.createObjectURL(text instanceof Blob ? text : new Blob([text], { type }));
   link.download = name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
@@ -176,6 +176,7 @@ function renderRunner() {
 }
 
 async function startRunner() {
+  if (labState.restoring) return toast('Wait for workspace restore to finish.', 'error');
   const runner = workflowState.runner;
   if (runner.running || repeaterBusy || labState.activeTest) return toast('Finish or cancel the current request first.', 'error');
   let requests;

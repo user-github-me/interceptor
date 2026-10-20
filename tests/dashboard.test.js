@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const HTTP = require('../http.js');
+const Lab = require('../lab.js');
 
 // Run the real forwarding functions with a stubbed CDP boundary.
 const source = fs.readFileSync(require.resolve('../dashboard.js'), 'utf8');
@@ -86,7 +87,7 @@ test('canceling dashboard debugging disables Auto before releasing the tab', asy
 test('history marks unavailable upload bytes and never treats multipart fallback as complete', async () => {
   const state = { history: [], seq: 0 };
   const context = vm.createContext({
-    HTTP, state, netMap: new Map(), extraReq: new Map(), MAX_BODY_CHARS: 750_000,
+    HTTP, Lab, state, netMap: new Map(), extraReq: new Map(), MAX_BODY_CHARS: 750_000,
     requestBodyFromCdp: HTTP.requestBodyText, limitBody: (text) => String(text || ''), fmtSize: (size) => String(size),
     cdp: async () => ({ postData: 'partial multipart text without file bytes' }),
     pruneHistory: () => {}, scheduleHistoryRender: () => {}, touchHistory: () => {},

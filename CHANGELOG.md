@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.1 — 2026-10-20
+
+### Added
+
+- First-use/update disclosure of automatic local traffic and credential storage, with affirmative continuation and existing-workspace recovery.
+- Installed Help/privacy guidance for capture, Auto scope, active requests, debugger access, local storage and backups.
+- Bounded chunked JSON-lines backups with optional authenticated AES-256-GCM encryption, progress, integrity verification and legacy JSON compatibility.
+- A design proposal for password-protected local storage; the current database remains unencrypted.
+
+### Improved
+
+- Removed redundant `tabs` permission after browser checks of tab selection, Auto mode, workbench focus and HTTP/HTTPS/file attachment.
+- Restricted messages and ports to expected extension pages, validated temporary header rules and tracked dashboard ownership across closure/restart.
+- Clearer API Builder authentication fields and compact editors that leave more space for response assertions.
+- Updated title, summary, privacy/permission guidance, workflow screenshots and recommended 128px icon padding.
+- Release packaging derives its version from the manifest and includes new local runtime helpers.
+
+### Fixed
+
+- Local-file history no longer prevents reopening or restoring a workspace; active API requests remain HTTP(S) only.
+- Backups above the former 200 MB ceiling round-trip in the bounded format, including encryption overhead.
+- Import reads cannot race; canceling prevents late previews, and passwords clear after success or failure.
+- Missing/revoked disclosure acceptance disables saved Auto and prevents silent restart after acknowledgment.
+- Backup chunks yield through queued tasks, avoiding Chrome’s background timer throttling.
+- Rule cleanup preserves other dashboards' active rules and removes orphaned rules on restart.
+
 ## 1.1.0 — 2026-10-03
 
 ### Added

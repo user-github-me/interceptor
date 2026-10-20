@@ -220,7 +220,15 @@
     return { requests: Workflow.importCollection({ format: 'interceptor-collection', version: 1, requests }), variables, warnings };
   }
 
-  function validateBackup(input) {
+  // Passive capture can include local documents when Chrome's file access is
+  // enabled. Active request tools keep their separate HTTP(S)-only validation.
+  function historyUrlAllowed(value) {
+    if (typeof value !== 'string' || value.length > 20_000 || /[\u0000-\u0020]/.test(value)) return false;
+    try { return ['http:', 'https:', 'file:'].includes(new URL(value).protocol); }
+    catch { return false; }
+  }
+
+  function validateBackup(input, options = {}) {
     if (!input || input.format !== 'interceptor-backup' || input.version !== 1 || !input.workspace || typeof input.workspace !== 'object' || Array.isArray(input.workspace)) throw new Error('Not an Interceptor workspace backup.');
     const workspace = input.workspace;
     const arrays = { history: 2500, repeaters: 100, collections: 100, autoLog: 500, runnerResults: 50, findings: 1000, environments: 50, websocketFrames: 1000 };
@@ -238,7 +246,7 @@
     for (const entry of workspace.history) {
       object(entry, 'history entry');
       str(entry.url, 20_000, 'history URL');str(entry.method, 40, 'history method');
-      if (!/^https?:$/.test(new URL(entry.url).protocol)) throw new Error('Backup history URL is not HTTP(S).');
+      if (!historyUrlAllowed(entry.url)) throw new Error('Backup history URL must use HTTP(S) or file.');
       if (!Number.isFinite(entry.wallTime)) throw new Error('Invalid history metadata in backup.');
       id(entry.id, 'history ID'); metadata(entry, 'history');
       if (entry.status != null && (!Number.isInteger(entry.status) || entry.status < 0 || entry.status > 599)) throw new Error('Invalid history status.');
@@ -328,7 +336,7 @@
       }
     }
     // The UI restores only named fields, without imported live session handles.
-    return JSON.parse(JSON.stringify(workspace));
+    return options.clone === false ? workspace : structuredClone(workspace);
   }
 
   function base64(bytes) { return HTTP.bytesToB64(bytes); }
@@ -356,7 +364,7 @@
       return JSON.parse(new TextDecoder().decode(plaintext));
     } catch { throw new Error('Unable to unlock backup: wrong password or damaged file.'); }
   }
-  const api = { parseAssertions, runAssertions, jsonPointer, passiveReview, withoutCredentials, importPostman, validateBackup, encryptBackup, decryptBackup };
+  const api = { parseAssertions, runAssertions, jsonPointer, passiveReview, withoutCredentials, importPostman, historyUrlAllowed, validateBackup, encryptBackup, decryptBackup };
   global.Lab = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
