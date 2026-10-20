@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="docs/screenshots/banner.png" alt="Interceptor — a Burp-style HTTP proxy that lives in your browser" width="820">
+  <img src="docs/screenshots/banner.png" alt="Interceptor — HTTP and API testing in your browser" width="820">
 </p>
 
 <p align="center">
   <b>See, edit, replay and auto-tamper the HTTP your web app sends — right inside your browser.</b><br>
-  A lightweight, Burp-style proxy as a Chromium extension. No proxy setup, no certificates, no external app.
+  A local HTTP and API testing workbench for Chromium. No system proxy setup or extra certificates.
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 
 ## What is this?
 
-**Interceptor** is a browser extension for web developers and security testers who want to inspect and manipulate their own app's traffic without leaving the browser. It's the everyday 20% of Burp Suite — intercept, history, and repeater — plus one thing Burp makes you do by hand: **Auto mode**, which rewrites chosen fields (like a payment `amount`) on every request automatically, so you can test server-side validation in seconds.
+**Interceptor** is a browser workbench for web developers and security testers to inspect, reproduce, and test their application's HTTP and WebSocket traffic. Capture and edit live messages, build API requests, run reusable response tests, review recorded security evidence, and keep the work locally. **Auto mode** rewrites selected fields on in-scope requests to help test server-side validation.
 
 Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, forward, and drop** live requests and responses — something a normal `webRequest` extension cannot do.
 
@@ -28,7 +28,7 @@ Because it's built on the Chrome DevTools Protocol, it can truly **pause, edit, 
 
 - 🧲 **Intercept** — pause requests (and responses) and edit the raw method, path, query, headers or body before they continue. Forward, drop, or forward-and-catch-the-response.
 - 📜 **HTTP History** — a live table of every request from the target tab, with full headers (including `Cookie`/`Set-Cookie`), bodies, timing and size. Search URLs, headers, and bodies; filter by method/status/type; import or export **HAR**.
-- 🔁 **Repeater** — hand-craft a raw request and fire it as many times as you like. What you type is exactly what goes on the wire — including `Cookie`, `Origin`, `User-Agent` and `Sec-*` headers.
+- 🔁 **Repeater** — hand-craft a raw request and fire it as many times as you like. Reproduce headers such as `Cookie`, `Origin`, `User-Agent` and `Sec-*`; inspect **Actual request sent** to check browser normalization and restrictions.
 - 📥 **cURL import** — paste a command from DevTools to create an editable Repeater request. Nothing executes or sends during import.
 - 🗂️ **Collections & variables** — organize named requests in folders with notes. Reuse `{{host}}`, `{{baseUrl}}`, or your own variables across Repeater and Runner. Import/export portable collections; work is saved locally automatically.
 - 🧪 **Runner** — replace a value with `{{payload}}`, try up to 50 values sequentially, and inspect status, timing, size, and response-text checks. Cancel a run, export CSV, or compare results.
@@ -90,6 +90,16 @@ git clone https://github.com/user-github-me/interceptor.git
 ```
 
 ## Quick start
+
+On first use or when the data notice changes, review the local-saving notice and
+choose **Continue and save locally** before starting new testing. History, drafts, authentication
+fields, and results save automatically in this browser profile. The local
+database is not separately encrypted; optional encryption protects downloaded
+backups. **Help** explains capture, Auto scope, active requests, the debugger
+banner, and links to the [privacy policy](PRIVACY.md). Existing work is preserved.
+The notice also offers a raw recovery download of existing saved work. Damaged
+records may need repair before restore; recovery downloads are unencrypted and
+can contain credentials.
 
 ### Test a payment flow in 15 seconds (Auto mode)
 
@@ -162,12 +172,15 @@ may be intentional. **WebSockets** records frames while Intercept has a tab
 attached; it does not pause or inject messages.
 
 All workbench data saves automatically in the current browser profile’s local
-database, within the documented preview limits. Outgoing Builder, Repeater,
+database, which is not separately encrypted by the extension, within the documented
+preview limits. Outgoing Builder, Repeater,
 Runner and credential-comparison requests also appear in **HTTP History**.
 **Workspace → Download full
 backup** exports history, snapshots, collections, environments, results, tool
-drafts, security observations, and frames. Set a password of at least eight
-characters to encrypt it. To restore, enter the same password, choose **Import
+drafts, security observations, and frames as a chunked JSON-lines file. Older JSON
+backups can still be imported. Set a password of at least eight characters to
+encrypt the downloaded chunks; the local database remains unencrypted. To restore,
+enter the same password, choose **Import
 backup**, review the counts, then choose **Replace workspace**. Detach and finish
 active requests first. Restore sends no requests, leaves Auto mode off, and keeps
 a local undo copy. Backups can contain credentials; downloaded files remain after
@@ -226,12 +239,11 @@ Use **URL safety scope** to constrain those rules. Each line can be plain text, 
 | Permission | Why |
 |---|---|
 | `debugger` | The core: pause, edit, forward and drop live requests/responses via CDP. |
-| `tabs` | List tabs to target and coordinate attach/detach. |
 | `storage` | Save local settings/rules and session coordination; the complete workspace is saved locally in IndexedDB. |
 | `webRequest` | Show the *"Actual request sent"* view in Repeater. |
 | `declarativeNetRequestWithHostAccess` | Let Repeater send otherwise-forbidden headers (`Cookie`, `Origin`, `User-Agent`, …) exactly as typed. |
 | `clipboardWrite` | Copy raw messages, cURL commands, decoded output, and diffs when you click a copy button. |
-| `<all_urls>` | Access traffic from the sites you select and send your API tests to their chosen targets. |
+| `<all_urls>` | Access selected testing sites and HTTP(S) API targets; show matching tab titles/URLs and inspect allowed local-file tabs. |
 
 There are no analytics or telemetry. Analysis and storage are local; active API tools send requests only to the targets you choose.
 
@@ -242,9 +254,17 @@ There are no analytics or telemetry. Analysis and storage are local; active API 
 - Bodies are edited as UTF-8 text; binary and oversized bodies are passed through unchanged. History keeps up to 2,500 entries, 750,000 characters per body, and a 64-million-character total text budget. Repeater previews up to 4 MB per response.
 - Raw panes render up to 200,000 characters to keep large responses responsive while resizing. Copy and exports retain the stored text within each tool's capture limits.
 - Workspaces save automatically in the browser profile on your PC. Repeater supports 100 tabs; Collections 100 requests; environments 50; WebSockets 1,000 capped frames. Browser disk quotas still apply; the UI reports save failures and offers backup download.
+- Full backups process 1 MiB chunks and accept up to 1 GB of workspace JSON within
+  a 1.4 GB file limit. Legacy plaintext JSON imports use the same 1 GB data budget;
+  legacy encrypted envelopes retain a 200 MB compatibility limit. Oversized or
+  invalid exports/imports report an error without replacing saved work. Device
+  memory and browser quotas can impose lower practical limits.
 - Runner is limited to 50 payloads and keeps capped response previews. Site Map and passive Security Review cover recorded/imported traffic; they do not crawl sites or prove vulnerabilities automatically.
 - cURL import supports literal URLs, method, headers, body, cookies, Basic auth, and redirects. Unsupported options and file uploads are rejected instead of silently omitted.
 - Browsers can't send a body with `GET`/`HEAD`, so Repeater can't either.
+- Local `file:` documents can be recorded when the browser allows file access for
+  the extension. Their history survives workspace reload and backup restore; active
+  API tools send only HTTP(S) requests.
 - Traffic from other-process iframes and some service workers may not be captured.
 - For a self-signed HTTPS dev cert, open the URL in a tab and accept it once before using Repeater.
 
@@ -267,7 +287,8 @@ npm run release:verify
 
 The signed build requires your existing signing key and previous local CRX;
 it does not create a replacement key. Outputs stay under ignored
-`local/release-1.1.0/`. ZIP and CRX payloads contain the same runtime files; the
+`local/release-1.1.1/` for this update. ZIP and CRX payloads contain the same runtime
+files; the
 verification report checks signatures, identity continuity, content and checksums.
 
 The browser integration check uses a local echo server and an isolated Chromium
@@ -276,6 +297,7 @@ profile with the unpacked extension loaded and remote debugging enabled:
 ```bash
 node tests/browser-integration.mjs http://127.0.0.1:9226
 node tests/browser-popup.mjs http://127.0.0.1:9226 --screenshots
+node tests/browser-backup-large.mjs http://127.0.0.1:9226 --require-file-access
 ```
 
 It checks debugger attachment, request/response edits, Auto scope and worker
@@ -287,6 +309,12 @@ It also checks every draggable split, keyboard/reset actions, saved sizes, both
 themes at narrow widths, auth/body modes, exports, Postman import, storage failures,
 encrypted file import, and restore undo. Add `--screenshots --store-screenshots`
 to create local workbench captures and five 1280×800 store images.
+
+The separate large-backup check uses synthetic 51 × 4 MB response drafts,
+measures export/import responsiveness, and checks legacy backup recovery and
+local-file capture/restore. It restores the isolated profile's previous workspace.
+Enable file access for that complete check; it can use `--extension-id ID` when
+the extension worker is idle and no dashboard is open.
 
 ```
 manifest.json      MV3 manifest
@@ -300,6 +328,8 @@ workflow-ui.js/.css collections, Inspector, Site Map, Runner, and tool switcher
 lab.js             assertions, passive review, Postman import, backup validation/encryption
 lab-ui.js/.css      API Builder, Security Review, WebSockets, environments, backup UI
 local-store.js     IndexedDB storage for complete local workspaces
+consent.js/.css    revisioned local-data disclosure and in-product help
+backup.js          bounded chunked JSON-lines backup import/export
 tests/             Node tests for parsing, rewriting, scope, HAR, diff, and codecs
 icons/             extension icons
 docs/screenshots/  images used in this README

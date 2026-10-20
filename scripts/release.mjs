@@ -9,7 +9,8 @@ import { extensionId, verifyCrx } from './crx.mjs';
 
 const execute = promisify(execFile);
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const version = '1.1.0';
+const version = JSON.parse(await fs.readFile(path.join(root, 'manifest.json'), 'utf8')).version;
+assert.match(version, /^\d+\.\d+\.\d+$/, 'Manifest must declare a three-part release version.');
 const output = path.join(root, 'local', `release-${version}`);
 const runtime = path.join(output, 'runtime');
 const baseName = `interceptor-${version}`;
@@ -19,13 +20,13 @@ const archiveScript = path.join(root, 'scripts', 'release-archive.py');
 const allowlist = Object.freeze([
   'manifest.json', 'background.js', 'http.js', 'workbench.js', 'workflow.js',
   'workflow-ui.js', 'workflow.css', 'lab.js', 'lab-ui.js', 'lab.css', 'local-store.js',
-  'layout.js', 'layout.css',
+  'layout.js', 'layout.css', 'consent.js', 'consent.css', 'backup.js',
   'dashboard.html', 'dashboard.js', 'dashboard.css', 'popup.html', 'popup.js', 'popup.css',
   'icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png',
 ]);
 
 function options() {
-  const result = { browser: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser', reference: 'local/interceptor-1.0.1.crx' };
+  const result = { browser: '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser', reference: 'local/release-1.1.0/interceptor-1.1.0.crx' };
   const flags = { '--sign': 'sign', '--verify': 'verify', '--require-crx': 'requireCrx', '--self-test': 'selfTest', '--help': 'help' };
   const values = { '--key': 'key', '--browser': 'browser', '--reference': 'reference' };
   for (let i = 2; i < process.argv.length; i++) {
@@ -46,14 +47,14 @@ async function exists(file) {
 }
 
 async function checkSource() {
-  assert.equal(allowlist.length, 23);
+  assert.equal(new Set(allowlist).size, allowlist.length, 'Runtime allowlist contains duplicates.');
   for (const name of allowlist) {
     const info = await fs.lstat(path.join(root, name));
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Runtime input must be a regular file: ${name}`);
   }
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'manifest.json'), 'utf8'));
   const packageJson = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
-  if (manifest.version !== version || packageJson.version !== version || manifest.manifest_version !== 3) throw new Error('Release requires version 1.1.0 and Manifest V3.');
+  if (manifest.version !== version || packageJson.version !== version || manifest.manifest_version !== 3) throw new Error(`Release requires matching version ${version} and Manifest V3.`);
   const references = [manifest.background.service_worker, manifest.action.default_popup, ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)];
   for (const html of ['dashboard.html', 'popup.html']) {
     const source = await fs.readFile(path.join(root, html), 'utf8');
@@ -142,7 +143,7 @@ async function selfTest(reference) {
 async function main() {
   const opts = options();
   if (opts.help) {
-    console.log(`Prepare Interceptor ${version} from an exact 23-file runtime allowlist.
+    console.log(`Prepare Interceptor ${version} from an exact ${allowlist.length}-file runtime allowlist.
 
 Usage:
   npm run release                         Stage runtime and create/verify ZIP only
@@ -156,7 +157,7 @@ Options:
   --verify             Verify existing artifacts without staging or signing
   --require-crx        Fail verification if the signed CRX is absent
   --browser PATH       Browser executable (default: installed macOS Brave)
-  --reference PATH     Previous signed CRX (default: local/interceptor-1.0.1.crx)
+  --reference PATH     Previous signed CRX (default: local/release-1.1.0/interceptor-1.1.0.crx)
   --self-test          Verify previous signature and reject malformed/tampered CRX
   --help               Show this help
 

@@ -7,10 +7,12 @@ export async function runReleaseChecks({ evaluate, call, until, fixture, request
   const set = (fields) => Object.entries(fields).map(([id, value]) => `$('#${id}').value=${JSON.stringify(value)};`).join('');
   const file = async (selector, value) => {
     const path = `${process.cwd()}/local/release-test-import.json`;
-    await fs.writeFile(path, JSON.stringify(value));
+    await fs.writeFile(path, typeof value === 'string' ? value : JSON.stringify(value));
     const root = await call('DOM.getDocument');
     const input = await call('DOM.querySelector', { nodeId: root.root.nodeId, selector });
     await call('DOM.setFileInputFiles', { nodeId: input.nodeId, files: [path] });
+    // Keep the selected file available while bounded asynchronous reads finish.
+    await until('typeof backupBusy === \"undefined\" || !backupBusy');
     await fs.rm(path);
   };
   await evaluate(`window.releaseDownloads=[];window.releaseCreateURL=URL.createObjectURL;window.releaseAnchorClick=HTMLAnchorElement.prototype.click;
@@ -19,7 +21,7 @@ export async function runReleaseChecks({ evaluate, call, until, fixture, request
   const download = async (click) => {
     const before = await evaluate('window.releaseDownloads.length');
     await evaluate(click);
-    await until(`window.releaseDownloads.length>${before}`);
+    await until(`window.releaseDownloads.length>${before} || document.querySelector("#backupStatus").textContent.includes("failed")`);
     return evaluate('window.releaseDownloads.at(-1).text()');
   };
   try {
@@ -145,12 +147,13 @@ export async function runReleaseChecks({ evaluate, call, until, fixture, request
     assert.ok(backup.workspace.compare.left.length > 1000000);
     assert.ok(backup.workspace.fields.decoderOutput.length > 1000000);
     await evaluate(`window.releaseWrite=LocalStore.write;LocalStore.write=async()=>{throw new Error('Simulated quota exhausted')}`);
-    const emergency = JSON.parse(await download(`$('#backupDownload').click()`));
-    assert.equal(emergency.workspace.history.length, backup.workspace.history.length);
+    await download(`$('#backupDownload').click()`);
+    const emergency = await evaluate('Backup.readFile(window.releaseDownloads.at(-1),"")');
+    assert.equal(emergency.history.length, backup.workspace.history.length);
     await evaluate(`(async()=>{LocalStore.write=window.releaseWrite;await flushLocalSave()})()`);
     await evaluate(`$('#backupPassword').value='release-encrypted-password'`);
-    const encrypted = JSON.parse(await download(`$('#backupDownload').click()`));
-    assert.equal(encrypted.format, 'interceptor-encrypted-backup');
+    const encrypted = await download(`$('#backupDownload').click()`);
+    assert.equal(JSON.parse(encrypted.split('\n')[0]).encrypted, true);
     await evaluate(`$('#backupPassword').value='wrong-password'`);
     await file('#backupFile', encrypted);
     await until(`$('#toast').textContent.includes('Backup import failed')`);
@@ -171,8 +174,9 @@ export async function runReleaseChecks({ evaluate, call, until, fixture, request
     await until('typeof labState!=="undefined" && labState.ready && labState.storageBlocked');
     assert.equal(await evaluate('LocalStore.read().then(data=>data.workspace.history)'), 'invalid');
     await evaluate(`window.releaseDownloads=[];window.releaseCreateURL=URL.createObjectURL;window.releaseAnchorClick=HTMLAnchorElement.prototype.click;URL.createObjectURL=function(blob){window.releaseDownloads.push(blob);return window.releaseCreateURL.call(URL,blob)};HTMLAnchorElement.prototype.click=function(){if(!this.download)return window.releaseAnchorClick.call(this)}`);
-    const blockedBackup = JSON.parse(await download(`$('#backupDownload').click()`));
-    assert.equal(blockedBackup.format, 'interceptor-backup');
+    await download(`$('#backupDownload').click()`);
+    const blockedBackup = await evaluate('Backup.readFile(window.releaseDownloads.at(-1),"")');
+    assert.ok(Array.isArray(blockedBackup.history));
     await evaluate(`applyBackup(Lab.validateBackup(${JSON.stringify(backup)}))`);
     await call('Page.reload');
     await until('typeof labState!=="undefined" && labState.ready && document.readyState==="complete"');

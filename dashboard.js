@@ -35,7 +35,6 @@ function connectDashboard() {
     if (!closingDashboard) setTimeout(connectDashboard, 250);
   });
 }
-connectDashboard();
 
 const MAX_HISTORY = 2500;
 const MAX_BODY_CHARS = 750_000;         // characters kept per captured body
@@ -282,6 +281,8 @@ function attachErrorMessage(msg, host) {
 }
 
 async function attach() {
+  if (labState.restoring) return toast('Wait for workspace restore to finish.', 'error');
+  if (!await Disclosure.accepted()) return;
   const tabId = Number($('#tabSelect').value);
   if (!tabId) return toast('Pick a tab to attach to first.', 'error');
   // Re-read the tab's CURRENT url — it may have navigated/redirected since the list was built.
@@ -897,7 +898,7 @@ function applyResponse(e, r) {
 }
 
 function onRequestWillBeSent(p) {
-  if (/^(data|blob):/i.test(p.request.url)) return;
+  if (!Lab.historyUrlAllowed(p.request.url)) return;
   const prev = netMap.get(p.requestId);
   if (prev && p.redirectResponse) {
     applyResponse(prev, p.redirectResponse);
@@ -1553,6 +1554,8 @@ async function readResponseLimited(res, limit) {
 }
 
 async function sendRepeater(r, options = {}) {
+  if (labState.restoring) throw new Error('Wait for workspace restore to finish.');
+  if (!await Disclosure.accepted()) throw new Error('Review the local-data disclosure before sending requests.');
   if (labState.activeTest && !options.lab) return toast('Finish or stop the credential comparison first.', 'error');
   if (typeof workflowState !== 'undefined' && workflowState.runner.running && !options.runner) return toast('Stop the Runner before sending another request.', 'error');
   if (r.abort || repeaterBusy) return toast('Wait for the current Repeater request to finish or cancel it.', 'error');
@@ -1787,7 +1790,8 @@ function bindUi() {
   });
 
   // The background worker rewrites requests on tabs it handles; show them in the Auto log too.
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('background.js')) return;
     if (msg && msg.type === 'autoRewrite' && msg.entry) recordAutoExternal(msg.entry);
   });
 
@@ -1913,20 +1917,26 @@ function bindUi() {
 }
 
 async function cleanupStale() {
-  // Clear this dashboard's leftover Repeater header rules from a previous run.
-  // (Do NOT detach debugger targets here — the background worker's Auto-mode
-  //  sessions are legitimate attachments we must not kill.)
-  try {
-    const rules = await chrome.declarativeNetRequest.getSessionRules();
-    const ids = rules.filter((r) => r.id >= 1000 && r.id < 101000).map((r) => r.id);
-    if (ids.length) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids });
-    await chrome.storage.session.set({ repeaterRuleIds: [] });
-  } catch { /* ignore */ }
+  // The worker owns header-rule cleanup and preserves other dashboards' rules.
   // A fresh dashboard hasn't claimed any tab yet; drop a stale claim from a prior crash.
   try { await chrome.storage.session.set({ dashboardTabId: null }); } catch { /* ignore */ }
 }
 
 (async function init() {
+  $('#helpBtn').addEventListener('click', () => Disclosure.showHelp());
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[Disclosure.STORAGE_KEY]) {
+      Disclosure.accepted().then((ok) => { if (!ok) location.reload(); });
+    }
+  });
+  const proceed = await Disclosure.require({ recover: async () => {
+    const saved = await LocalStore.read();
+    if (!saved) throw new Error('No existing saved workspace was found.');
+    downloadLocal(await Backup.recoveryBlob(saved), 'interceptor-existing-workspace.jsonl');
+  } });
+  if (!proceed) return;
+  if (!await Disclosure.accepted()) return location.reload();
+  connectDashboard();
   await cleanupStale();
   await loadSettings();
   try {

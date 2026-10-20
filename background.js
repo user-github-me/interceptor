@@ -10,8 +10,8 @@
  * attach/detach/claim/release operations run through one serial queue so a
  * settings-triggered sync can't re-attach a tab the dashboard just claimed. */
 
-importScripts('http.js');
-/* global HTTP */
+importScripts('http.js', 'consent.js');
+/* global HTTP, Disclosure */
 
 const S = {
   autoMode: false,
@@ -23,9 +23,11 @@ const S = {
 };
 const attached = new Set(); // tabIds this worker attached for Auto mode
 const repeaterRuleIds = new Set(); // temporary DNR rules owned by an open dashboard
+const repeaterRuleOwners = new Map(); // rule id -> dashboard tab id
 let dashboardTabId = null;  // tab currently owned by the dashboard (excluded)
 let autoCount = 0;
-let dashboardPorts = 0;
+const dashboardPorts = new Map(); // open ports per dashboard tab
+let disclosureAccepted = false;
 let repeaterChain = Promise.resolve();
 function serializeRepeater(fn) {
   const run = repeaterChain.then(fn, fn);
@@ -43,13 +45,18 @@ function serial(fn) {
 
 // ---- state ----
 async function loadState() {
+  disclosureAccepted = await Disclosure.accepted();
   try {
     const [{ settings }, session] = await Promise.all([
       chrome.storage.local.get('settings'),
       chrome.storage.session.get('autoTabId'),
     ]);
     const s = settings || {};
-    S.autoMode = !!s.autoMode;
+    // An update or revoked disclosure must not restart a saved Auto session.
+    S.autoMode = disclosureAccepted && !!s.autoMode;
+    if (!disclosureAccepted && s.autoMode) {
+      await chrome.storage.local.set({ settings: { ...s, autoMode: false } });
+    }
     S.autoScope = s.autoScope === 'tab' ? 'tab' : 'all';
     S.autoTabId = typeof session.autoTabId === 'number' ? session.autoTabId : null;
     S.autoRules = Array.isArray(s.autoRules)
@@ -62,7 +69,7 @@ async function loadState() {
 
 const names = () => S.autoRules.flatMap((r) => HTTP.splitNames(r && r.param));
 const scopeErrors = () => HTTP.urlInScope('https://interceptor.invalid/', S.autoInclude, S.autoExclude).errors;
-const isOn = () => S.autoMode && names().length > 0 && !scopeErrors().length && (S.autoScope === 'all' || S.autoTabId != null);
+const isOn = () => disclosureAccepted && S.autoMode && names().length > 0 && !scopeErrors().length && (S.autoScope === 'all' || S.autoTabId != null);
 const shouldHandle = (tabId) =>
   tabId !== dashboardTabId && (S.autoScope === 'all' || (S.autoScope === 'tab' && tabId === S.autoTabId));
 
@@ -79,26 +86,44 @@ let ready = serial(init);
 async function init() {
   await loadState();
   try {
-    const sess = await chrome.storage.session.get(['dashboardTabId', 'attachedTabs', 'autoCount', 'repeaterRuleIds']);
+    const sess = await chrome.storage.session.get(['dashboardTabId', 'attachedTabs', 'autoCount', 'repeaterRuleIds', 'repeaterRuleOwners']);
     dashboardTabId = sess.dashboardTabId ?? null;
     if (typeof sess.autoCount === 'number') autoCount = sess.autoCount;
     const targets = await chrome.debugger.getTargets();
     const live = new Set(targets.filter((t) => t.attached && t.tabId != null).map((t) => t.tabId));
     for (const id of (sess.attachedTabs || [])) if (live.has(id)) attached.add(id);
-    for (const id of (sess.repeaterRuleIds || [])) if (Number.isInteger(id)) repeaterRuleIds.add(id);
+    for (const id of (sess.repeaterRuleIds || [])) {
+      if (!validRuleId(id)) continue;
+      repeaterRuleIds.add(id);
+      const owner = sess.repeaterRuleOwners?.[id];
+      if (validTabId(owner)) repeaterRuleOwners.set(id, owner);
+    }
   } catch { /* ignore */ }
+  // Recover browser-installed rules even if the worker stopped before saving
+  // their ownership metadata, or an older dashboard cleared that metadata.
+  try {
+    const liveRules = await chrome.declarativeNetRequest.getSessionRules();
+    for (const rule of liveRules) if (validRuleId(rule.id)) repeaterRuleIds.add(rule.id);
+  } catch { /* tracked rules can still be cleaned with existing metadata */ }
   // A dashboard may have closed while this worker was asleep.
   const dashboards = await chrome.tabs.query({ url: chrome.runtime.getURL('dashboard.html') });
   if (!dashboards.length) {
     dashboardTabId = null;
     await chrome.storage.session.set({ dashboardTabId: null });
     await clearRepeaterRules();
+  } else {
+    const liveDashboards = new Set(dashboards.map((tab) => tab.id));
+    await serializeRepeater(async () => {
+      for (const id of [...repeaterRuleIds]) {
+        if (!disclosureAccepted || !liveDashboards.has(repeaterRuleOwners.get(id))) await removeRepeaterRuleNow(id);
+      }
+    });
   }
   await syncNow();
 }
 
 async function attachRaw(tabId) {
-  if (attached.has(tabId)) return;
+  if (attached.has(tabId) || !await Disclosure.accepted()) return;
   try {
     await chrome.debugger.attach({ tabId }, '1.3');
   } catch { return; }
@@ -155,7 +180,9 @@ async function onPaused(source, params) {
   if (id == null || id === dashboardTabId) return; // dashboard handles its own tab
   const req = params.request;
   try {
-    if (isOn() && shouldHandle(id) && autoInScope(req.url)) {
+    // Recheck the persisted choice before handling traffic, including revocation
+    // while a storage-change sync is queued behind another debugger operation.
+    if (isOn() && await Disclosure.accepted() && shouldHandle(id) && autoInScope(req.url)) {
       const rb = HTTP.requestBodyText(req);
       const canRewriteBody = rb.known && rb.text.length <= 750_000;
       const textBody = canRewriteBody ? rb.text : '';
@@ -193,7 +220,16 @@ function broadcast(method, mod, tabId) {
 }
 
 function saveRepeaterRules() {
-  return chrome.storage.session.set({ repeaterRuleIds: [...repeaterRuleIds] }).catch(() => {});
+  return chrome.storage.session.set({
+    repeaterRuleIds: [...repeaterRuleIds], repeaterRuleOwners: Object.fromEntries(repeaterRuleOwners),
+  }).catch(() => {});
+}
+
+async function removeRepeaterRuleNow(id) {
+  await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] });
+  repeaterRuleIds.delete(id);
+  repeaterRuleOwners.delete(id);
+  await saveRepeaterRules();
 }
 
 function clearRepeaterRules() {
@@ -201,19 +237,31 @@ function clearRepeaterRules() {
 }
 async function clearRepeaterRulesNow() {
   const ids = [...repeaterRuleIds];
-  repeaterRuleIds.clear();
-  await saveRepeaterRules();
   if (ids.length) {
-    try { await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids }); } catch { /* already gone */ }
+    try { await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: ids }); }
+    catch { return; } // keep ownership so a later cleanup/restart can retry
   }
+  repeaterRuleIds.clear();
+  repeaterRuleOwners.clear();
+  await saveRepeaterRules();
 }
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'dashboard') return;
-  dashboardPorts++;
+  if (port.name !== 'dashboard' || senderPage(port.sender) !== 'dashboard' || !validTabId(port.sender.tab?.id)) {
+    port.disconnect();
+    return;
+  }
+  const tabId = port.sender.tab.id;
+  dashboardPorts.set(tabId, (dashboardPorts.get(tabId) || 0) + 1);
   port.onDisconnect.addListener(() => {
-    dashboardPorts = Math.max(0, dashboardPorts - 1);
-    if (!dashboardPorts) clearRepeaterRules();
+    const remaining = (dashboardPorts.get(tabId) || 1) - 1;
+    if (remaining) dashboardPorts.set(tabId, remaining);
+    else {
+      dashboardPorts.delete(tabId);
+      serializeRepeater(async () => {
+        for (const [id, owner] of repeaterRuleOwners) if (owner === tabId) await removeRepeaterRuleNow(id);
+      }).catch(() => {}); // retained ownership allows startup cleanup to retry
+    }
   });
 });
 
@@ -238,7 +286,12 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.settings) sync();
+  if (area === 'local' && (changes.settings || changes.localDataDisclosure)) {
+    serial(async () => {
+      await syncNow();
+      if (!disclosureAccepted) await clearRepeaterRules();
+    });
+  }
   if (area === 'session' && changes.dashboardTabId) {
     serial(async () => { dashboardTabId = changes.dashboardTabId.newValue ?? null; await syncNow(); });
   }
@@ -260,10 +313,100 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
+const validTabId = (id) => Number.isSafeInteger(id) && id > 0;
+const validRuleId = (id) => Number.isSafeInteger(id) && id >= 1000 && id <= 100999;
+function senderPage(sender) {
+  if (sender?.id !== chrome.runtime.id || (sender.frameId != null && sender.frameId !== 0)) return null;
+  for (const page of ['dashboard', 'popup']) {
+    if (sender.url === chrome.runtime.getURL(`${page}.html`)) return page;
+  }
+  return null;
+}
+function exactKeys(value, required, optional = []) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && required.every((key) => Object.prototype.hasOwnProperty.call(value, key))
+    && Object.keys(value).every((key) => required.includes(key) || optional.includes(key));
+}
+const REQUEST_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'connect']);
+const SET_HEADERS = new Set(['cookie', 'origin', 'referer', 'user-agent', 'accept-encoding', 'dnt', 'date', 'via', 'accept-charset', 'access-control-request-headers', 'access-control-request-method']);
+const REMOVE_HEADERS = new Set(['cookie', 'origin', 'referer', 'user-agent', 'accept-language', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform']);
+const escapeRuleUrl = (url) => url.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+
+/** Accept only the per-request header rule the dashboard generates. */
+function validateRepeaterRule(rule, tabId) {
+  if (!exactKeys(rule, ['id', 'priority', 'action', 'condition']) || !validRuleId(rule.id) || rule.priority !== 1) {
+    throw new Error('Invalid temporary header rule.');
+  }
+  const { action, condition } = rule;
+  if (!exactKeys(action, ['type', 'requestHeaders']) || action.type !== 'modifyHeaders'
+      || !Array.isArray(action.requestHeaders) || !action.requestHeaders.length || action.requestHeaders.length > 256) {
+    throw new Error('Only request header changes are allowed.');
+  }
+  const usedHeaders = new Set();
+  for (const header of action.requestHeaders) {
+    if (!exactKeys(header, ['header', 'operation'], ['value']) || typeof header.header !== 'string'
+        || !/^[a-z0-9!#$%&'*+.^_`|~-]+$/.test(header.header) || usedHeaders.has(header.header)) {
+      throw new Error('Invalid or duplicate request header.');
+    }
+    usedHeaders.add(header.header);
+    if (header.operation === 'set') {
+      if (!(SET_HEADERS.has(header.header) || header.header.startsWith('sec-') || header.header.startsWith('proxy-'))
+          || typeof header.value !== 'string' || header.value.length > 500_000 || /[\r\n\0]/.test(header.value)) {
+        throw new Error('Invalid request header override.');
+      }
+    } else if (header.operation !== 'remove' || !REMOVE_HEADERS.has(header.header) || 'value' in header) {
+      throw new Error('Invalid request header removal.');
+    }
+  }
+  if (!exactKeys(condition, ['tabIds', 'resourceTypes'], ['requestMethods', 'urlFilter', 'regexFilter'])
+      || !Array.isArray(condition.tabIds) || condition.tabIds.length !== 1 || condition.tabIds[0] !== tabId
+      || !Array.isArray(condition.resourceTypes) || condition.resourceTypes.length !== 1 || condition.resourceTypes[0] !== 'xmlhttprequest'
+      || ('urlFilter' in condition) === ('regexFilter' in condition)) {
+    throw new Error('Header rules must target this dashboard request only.');
+  }
+  if ('requestMethods' in condition && (!Array.isArray(condition.requestMethods) || condition.requestMethods.length !== 1
+      || !REQUEST_METHODS.has(condition.requestMethods[0]))) throw new Error('Invalid request method scope.');
+  let url;
+  if ('urlFilter' in condition) {
+    if (typeof condition.urlFilter !== 'string' || !condition.urlFilter.startsWith('|') || !condition.urlFilter.endsWith('|')) {
+      throw new Error('Header rules require an exact request URL.');
+    }
+    url = condition.urlFilter.slice(1, -1);
+    if (/[*^|]/.test(url)) throw new Error('Header rules cannot match URL patterns.');
+  } else {
+    if (typeof condition.regexFilter !== 'string' || !condition.regexFilter.startsWith('^') || !condition.regexFilter.endsWith('$')) {
+      throw new Error('Header rules require an exact request URL.');
+    }
+    url = condition.regexFilter.slice(1, -1).replace(/\\(.)/g, '$1');
+    if (condition.regexFilter !== '^' + escapeRuleUrl(url) + '$') throw new Error('Header rules cannot match URL patterns.');
+  }
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error('Invalid header rule URL.'); }
+  if (url.length > 200_000 || !/^https?:$/.test(parsed.protocol) || parsed.href !== url) {
+    throw new Error('Header rules require an HTTP(S) request URL.');
+  }
+}
+
+const MESSAGE_KEYS = {
+  claimTab: ['type', 'tabId'], releaseTab: ['type', 'tabId'], getAutoStatus: ['type'],
+  setRepeaterRule: ['type', 'rule'], removeRepeaterRule: ['type', 'ruleId'],
+  incrementAutoCount: ['type'], resetAutoCount: ['type'],
+};
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
+    const page = senderPage(sender);
+    const keys = MESSAGE_KEYS[msg?.type];
+    if (!page || !keys || !exactKeys(msg, keys) || (msg.type !== 'getAutoStatus' && (page !== 'dashboard' || !validTabId(sender.tab?.id)))) {
+      throw new Error('This action is restricted to Interceptor pages.');
+    }
+    if (['claimTab', 'releaseTab'].includes(msg.type) && !validTabId(msg.tabId)) throw new Error('Invalid target tab.');
+    if (msg.type === 'removeRepeaterRule' && !validRuleId(msg.ruleId)) throw new Error('Invalid temporary header rule.');
     await ready;
-    if (msg && msg.type === 'claimTab' && typeof msg.tabId === 'number') {
+    if (['claimTab', 'setRepeaterRule', 'incrementAutoCount'].includes(msg.type) && !await Disclosure.accepted()) {
+      throw new Error('Review and accept local data handling before starting a test.');
+    }
+    if (msg.type === 'claimTab') {
       // Serialize so any in-flight sync finishes first, then we release the tab
       // and mark it owned — a later sync will exclude it.
       await serial(async () => {
@@ -272,7 +415,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         await detachRaw(msg.tabId);
       });
       reply({ ok: true });
-    } else if (msg && msg.type === 'releaseTab') {
+    } else if (msg.type === 'releaseTab') {
       await serial(async () => {
         if (dashboardTabId === msg.tabId) {
           dashboardTabId = null;
@@ -281,51 +424,57 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         await syncNow();
       });
       reply({ ok: true });
-    } else if (msg && msg.type === 'getAutoStatus') {
+    } else if (msg.type === 'getAutoStatus') {
       await loadState();
       reply({
         on: isOn(), scope: S.autoScope, tabId: S.autoTabId, count: autoCount,
         attached: [...attached], include: S.autoInclude, exclude: S.autoExclude, scopeErrors: scopeErrors(),
       });
-    } else if (msg && msg.type === 'setRepeaterRule' && msg.rule && Number.isInteger(msg.rule.id)) {
+    } else if (msg.type === 'setRepeaterRule') {
       try {
         await serializeRepeater(async () => {
-          const tabId = sender.tab?.id;
-          const tab = tabId == null ? null : await chrome.tabs.get(tabId);
+          const tabId = sender.tab.id;
+          validateRepeaterRule(msg.rule, tabId);
+          const previousOwner = repeaterRuleOwners.get(msg.rule.id);
+          if (previousOwner != null && previousOwner !== tabId) throw new Error('Header rule belongs to another dashboard.');
+          const tab = await chrome.tabs.get(tabId);
           if (tab?.url !== chrome.runtime.getURL('dashboard.html')) throw new Error('Repeater dashboard is closed.');
           repeaterRuleIds.add(msg.rule.id);
+          repeaterRuleOwners.set(msg.rule.id, tabId);
           await saveRepeaterRules();
           await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [msg.rule.id], addRules: [msg.rule] });
           // A close event can arrive while the browser installs the rule.
-          try { await chrome.tabs.get(tabId); }
+          try {
+            const live = await chrome.tabs.get(tabId);
+            if (live.url !== chrome.runtime.getURL('dashboard.html') || !await Disclosure.accepted()) throw new Error('Dashboard unavailable.');
+          }
           catch {
-            await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [msg.rule.id] });
-            repeaterRuleIds.delete(msg.rule.id);
-            await saveRepeaterRules();
+            await removeRepeaterRuleNow(msg.rule.id);
             throw new Error('Repeater dashboard is closed.');
           }
         });
         reply({ ok: true });
       } catch (error) { reply({ ok: false, error: error.message }); }
-    } else if (msg && msg.type === 'removeRepeaterRule' && Number.isInteger(msg.ruleId)) {
+    } else if (msg.type === 'removeRepeaterRule') {
       await serializeRepeater(async () => {
-        await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [msg.ruleId] });
-        repeaterRuleIds.delete(msg.ruleId);
-        await saveRepeaterRules();
+        const owner = repeaterRuleOwners.get(msg.ruleId);
+        if (owner != null && owner !== sender.tab.id) throw new Error('Header rule belongs to another dashboard.');
+        // Removing a missing own rule is safe and supports failure cleanup.
+        if (owner != null) await removeRepeaterRuleNow(msg.ruleId);
       });
       reply({ ok: true });
-    } else if (msg && msg.type === 'incrementAutoCount') {
+    } else if (msg.type === 'incrementAutoCount') {
       autoCount++;
       await saveCount();
       reply({ ok: true, count: autoCount });
-    } else if (msg && msg.type === 'resetAutoCount') {
+    } else if (msg.type === 'resetAutoCount') {
       autoCount = 0;
       await saveCount();
       reply({ ok: true, count: autoCount });
     } else {
       reply({});
     }
-  })();
+  })().catch((error) => reply({ ok: false, error: error.message }));
   return true; // async response
 });
 

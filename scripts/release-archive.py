@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import struct
 import zipfile
 
@@ -66,8 +67,8 @@ def main():
                 raise ValueError('Archive runtime differs from source: ' + name)
             hashes.append({'path': name, 'bytes': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()})
         manifest = json.loads(archive.read('manifest.json'))
-        if manifest.get('version') != '1.1.0' or manifest.get('manifest_version') != 3:
-            raise ValueError('Expected Manifest V3 and unpublished version 1.1.0')
+        if not isinstance(manifest.get('version'), str) or not re.fullmatch(r'\d+\.\d+\.\d+', manifest['version']) or manifest.get('manifest_version') != 3:
+            raise ValueError('Expected Manifest V3 and a three-part release version')
     print(json.dumps({'runtimeFiles': len(hashes), 'files': hashes, 'version': manifest['version']}))
 
 

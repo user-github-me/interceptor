@@ -9,10 +9,17 @@ const labState = {
   ready: false, storageBlocked: false, environments: [], environmentId: null, environmentSeq: 0,
   findings: [], websocketFrames: [], wsSeq: 0, wsSelected: null, interceptDrafts: [],
   activeTest: false, controller: null, comparison: null, builder: null, pendingBackup: null,
+  restoring: false,
 };
 const socketUrls = new Map();
 let localSaveTimer, localSavePromise = Promise.resolve();
 let localSaveStarted = 0;
+let backupBusy = false;
+let backupImportGeneration = 0;
+function setBackupBusy(busy) {
+  backupBusy = busy;
+  for (const id of ['backupDownload', 'backupImport', 'backupRestore', 'workspaceUndoRestore', 'backupPassword']) $('#' + id).disabled = busy;
+}
 // Only drafts and view preferences, never file inputs, passwords used for backups,
 // live tab IDs, debugger handles, or transient controllers.
 const draftFields = [
@@ -23,7 +30,7 @@ const draftFields = [
   'historyFilter', 'historyMethod', 'historyStatus', 'historyType', 'siteMapFilter', 'siteMapHideStatic', 'collectionFilter', 'repTimeout', 'wsFilter',
 ];
 
-function captureWorkspace() {
+function captureWorkspace({ clone = true } = {}) {
   const settings = { ...state.settings, repRemember: true, workspaceRemember: true };
   delete settings.autoTabId;
   const fields = {};
@@ -31,7 +38,7 @@ function captureWorkspace() {
     const input = $('#' + id);
     if (input) fields[id] = input.type === 'checkbox' ? input.checked : input.value;
   }
-  return JSON.parse(JSON.stringify({
+  const snapshot = {
     format: 'interceptor-backup', version: 1, extensionVersion: chrome.runtime.getManifest().version,
     savedAt: new Date().toISOString(), workspace: {
       settings, fields, history: state.history.map(({ requestId, ...entry }) => entry),
@@ -47,7 +54,8 @@ function captureWorkspace() {
       comparison: labState.comparison,
       interceptDrafts: [...labState.interceptDrafts, ...state.queue.map((item) => ({ raw: item.raw || '', url: item.url || '', stage: item.stage }))].slice(-100),
     },
-  }));
+  };
+  return clone ? structuredClone(snapshot) : snapshot;
 }
 
 function queueLocalSave() {
@@ -242,6 +250,7 @@ function renderBuilderResult() {
 }
 
 async function sendBuilder() {
+  if (labState.restoring) return toast('Wait for workspace restore to finish.', 'error');
   if (repeaterBusy || workflowState.runner.running || labState.activeTest) return toast('Finish or stop the current request first.', 'error');
   try {
     const r = { id: -2, ...buildApiRequest(), response: '', sent: '', tests: [], meta: '', abort: null };
@@ -268,6 +277,7 @@ function renderSecurity() {
 }
 
 async function compareCredentials() {
+  if (labState.restoring) return toast('Wait for workspace restore to finish.', 'error');
   if (labState.activeTest || repeaterBusy || workflowState.runner.running) return toast('Finish or stop the current request first.', 'error');
   let original, stripped;
   try {
@@ -323,18 +333,24 @@ function renderWebSockets() {
 }
 
 async function applyBackup(workspace) {
+  if (labState.restoring) throw new Error('A workspace restore is already running.');
   if (state.attached || workflowState.runner.running || repeaterBusy || labState.activeTest || state.queue.length) throw new Error('Detach the tab and finish or cancel active requests before restoring a backup.');
-  clearTimeout(localSaveTimer);
-  if (labState.storageBlocked) { const previous = await LocalStore.read(); if (previous) await LocalStore.preserve(previous); }
-  else { await flushLocalSave(); await LocalStore.preserve(captureWorkspace()); }
-  labState.ready = false;
-  try { restoreWorkspace(workspace, true); }
-  finally { labState.ready = true; }
-  if (workspace.layout) await Layout.restore(workspace.layout);
-  labState.storageBlocked = false;
-  saveSettings(); saveRepeaters();
-  await flushLocalSave();
-  toast('Workspace restored locally. Auto mode is off; attach and send requests when ready.');
+  labState.restoring = true;
+  setBackupBusy(true);
+  $('main').inert = true;
+  try {
+    clearTimeout(localSaveTimer);
+    if (labState.storageBlocked) { const previous = await LocalStore.read(); if (previous) await LocalStore.preserve(previous); }
+    else { await flushLocalSave(); await LocalStore.preserve(captureWorkspace()); }
+    labState.ready = false;
+    try { restoreWorkspace(workspace, true); }
+    finally { labState.ready = true; }
+    if (workspace.layout) await Layout.restore(workspace.layout);
+    labState.storageBlocked = false;
+    saveSettings(); saveRepeaters();
+    await flushLocalSave();
+    toast('Workspace restored locally. Auto mode is off; attach and send requests when ready.');
+  } finally { $('main').inert = false; labState.restoring = false; setBackupBusy(false); }
 }
 
 async function bindLab() {
@@ -369,7 +385,14 @@ async function bindLab() {
   $('#builderSave').addEventListener('click', () => { try { addCollection(buildApiRequest()); } catch (error) { toast(error.message, 'error'); } });
   $('#builderCurl').addEventListener('click', () => { try { const request = buildApiRequest(); const prepared = Workflow.prepareRequest(request.raw, request.target, workspaceVariableText()); copyText(HTTP.toCurl(prepared.parsed), 'cURL copied'); } catch (error) { toast(error.message, 'error'); } });
   $('#builderInspect').addEventListener('click', () => { try { const request = buildApiRequest(); openInspector(request.raw, request.target, labState.builder?.response || '', 'API Builder'); } catch (error) { toast(error.message, 'error'); } });
-  const updateAuth = () => { $('#builderAuthFields').classList.toggle('hidden', $('#builderAuth').value === 'none'); $('#builderAuthName').disabled = $('#builderAuth').value === 'bearer'; };
+  const updateAuth = () => {
+    const auth = $('#builderAuth').value;
+    $('#builderAuthFields').classList.toggle('hidden', auth === 'none');
+    $('#builderAuthName').closest('label').classList.toggle('hidden', auth === 'bearer');
+    $('#builderAuthFields').classList.toggle('single-auth-field', auth === 'bearer');
+    $('#builderAuthNameLabel').textContent = auth === 'basic' ? 'Username' : 'Header name';
+    $('#builderAuthName').disabled = auth === 'bearer';
+  };
   $('#builderAuth').addEventListener('change', updateAuth); updateAuth();
   $('#securityScan').addEventListener('click', () => {
     const key = (item) => `${item.code}|${item.url}|${item.evidence}`;
@@ -403,35 +426,39 @@ async function bindLab() {
   $('#workspaceSaveNow').addEventListener('click', () => flushLocalSave().catch(() => {}));
   $('#recoveredDrafts').addEventListener('click', (event) => { const action = event.target.closest('[data-draft]'); const draft = labState.interceptDrafts[Number(action?.dataset.draft)]; if (draft) { $('#decoderInput').value = draft.raw; switchView('decoder'); } });
   $('#backupDownload').addEventListener('click', async () => {
+    if (backupBusy) return;
+    setBackupBusy(true);
     try {
       // Keep export available when disk storage fails: this is the recovery path.
       const backup = captureWorkspace();
-      if (!labState.storageBlocked) await flushLocalSave().catch(() => {});
       const password = $('#backupPassword').value;
-      const output = password ? await Lab.encryptBackup(backup, password) : backup;
-      downloadLocal(JSON.stringify(output), `interceptor-workspace-${new Date().toISOString().slice(0, 10)}${password ? '-encrypted' : ''}.json`);
+      const output = await Backup.createBlob(backup, password, { onProgress: ({ bytes }) => { $('#backupStatus').textContent = `Preparing backup · ${fmtSize(bytes)}`; } });
+      downloadLocal(output, `interceptor-workspace-${new Date().toISOString().slice(0, 10)}${password ? '-encrypted' : ''}.jsonl`);
       $('#backupPassword').value = '';
+      $('#backupStatus').textContent = 'Backup downloaded.';
       toast(password ? 'Encrypted workspace backup downloaded.' : 'Workspace backup downloaded. It includes stored credentials.');
-    } catch (error) { toast(error.message, 'error'); }
+    } catch (error) { $('#backupStatus').textContent = error.message; toast(error.message, 'error'); }
+    finally { setBackupBusy(false); $('#backupPassword').value = ''; }
   });
   $('#backupImport').addEventListener('click', () => $('#backupFile').click());
   $('#backupFile').addEventListener('change', async (event) => {
+    if (backupBusy) { event.target.value = ''; return; }
+    setBackupBusy(true);
+    const generation = ++backupImportGeneration;
     labState.pendingBackup = null; $('#backupPreview').classList.add('hidden');
     try {
       const file = event.target.files?.[0]; if (!file) return;
-      if (file.size > 200_000_000) throw new Error('Backup files must be smaller than 200 MB.');
-      let data = JSON.parse(await file.text());
-      if (data.format === 'interceptor-encrypted-backup') data = await Lab.decryptBackup(data, $('#backupPassword').value);
-      const workspace = Lab.validateBackup(data);
+      const workspace = await Backup.readFile(file, $('#backupPassword').value, { onProgress: ({ bytes, total }) => { if (generation === backupImportGeneration) $('#backupStatus').textContent = `Reading backup · ${fmtSize(bytes)} of ${fmtSize(total)}`; } });
+      if (generation !== backupImportGeneration) return;
       labState.pendingBackup = workspace;
       $('#backupSummary').textContent = `Ready to restore ${workspace.history.length} history entries, ${workspace.repeaters.length} Repeater tabs, ${workspace.collections.length} requests, ${workspace.environments.length} environments, ${workspace.runnerResults.length} results, ${workspace.findings.length} observations and ${workspace.websocketFrames.length} frames. This replaces the current workspace; a local undo copy is kept. No requests are sent by importing.`;
       $('#backupPreview').classList.remove('hidden'); $('#backupPassword').value = '';
-    } catch (error) { toast(`Backup import failed: ${error.message}`, 'error'); }
-    finally { event.target.value = ''; }
+    } catch (error) { if (generation === backupImportGeneration) { $('#backupStatus').textContent = `Backup import failed: ${error.message}`; toast(`Backup import failed: ${error.message}`, 'error'); } }
+    finally { setBackupBusy(false); event.target.value = ''; $('#backupPassword').value = ''; }
   });
-  $('#backupDismiss').addEventListener('click', () => { labState.pendingBackup = null; $('#backupPreview').classList.add('hidden'); });
-  $('#backupRestore').addEventListener('click', async () => { try { if (labState.pendingBackup) { await applyBackup(labState.pendingBackup); labState.pendingBackup = null; $('#backupPreview').classList.add('hidden'); } } catch (error) { toast(error.message, 'error'); } });
-  $('#workspaceUndoRestore').addEventListener('click', async () => { try { const previous = await LocalStore.previous(); if (!previous) throw new Error('No previous restore to undo.'); await applyBackup(Lab.validateBackup(previous)); } catch (error) { toast(error.message, 'error'); } });
+  $('#backupDismiss').addEventListener('click', () => { backupImportGeneration++; labState.pendingBackup = null; $('#backupPreview').classList.add('hidden'); $('#backupStatus').textContent = 'Import canceled.'; });
+  $('#backupRestore').addEventListener('click', async () => { if (backupBusy) return; try { if (labState.pendingBackup) { await applyBackup(labState.pendingBackup); labState.pendingBackup = null; $('#backupPreview').classList.add('hidden'); } } catch (error) { toast(error.message, 'error'); } });
+  $('#workspaceUndoRestore').addEventListener('click', async () => { if (backupBusy) return; setBackupBusy(true); try { const previous = await LocalStore.previous(); if (!previous) throw new Error('No previous restore to undo.'); await applyBackup(Lab.validateBackup(previous)); } catch (error) { toast(error.message, 'error'); } finally { setBackupBusy(false); } });
   document.addEventListener('input', (event) => { if (event.target.id !== 'backupPassword' && event.target.type !== 'file') queueLocalSave(); });
   document.addEventListener('change', (event) => { if (event.target.type !== 'file' && event.target.id !== 'backupPassword') queueLocalSave(); });
   document.addEventListener('click', (event) => { if (event.target.closest('button') && !event.target.closest('#backupPreview')) queueLocalSave(); });

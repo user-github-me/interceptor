@@ -47,7 +47,7 @@ async function evaluate(expression) {
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function until(expression) {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 600; i++) {
     const result = await evaluate(expression);
     if (result) return result;
     await delay(50);
@@ -64,6 +64,22 @@ const server = http.createServer((req, res) => {
     if (req.url === '/') {
       res.setHeader('Content-Type', 'text/html');
       res.end('<!doctype html><title>Interceptor local fixture</title><h1>Local test app</h1>');
+    } else if (req.url === '/api/validate') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify({accepted:true, amount:JSON.parse(body || '{}').amount, currency:'USD'}));
+    } else if (req.url === '/demo/security') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Set-Cookie', 'demoSession=synthetic; Path=/');
+      res.end(JSON.stringify({ok:true,environment:'local demo'}));
+    } else if (req.url.startsWith('/demo/validate')) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'no-store');
+      const amount=Number(new URL(req.url, 'http://fixture').searchParams.get('amount'));
+      res.statusCode=amount < 0 ? 422 : 200;
+      res.end(JSON.stringify({accepted:amount >= 0,amount,reason:amount < 0 ? 'Amount must be nonnegative' : 'Validation passed'}));
     } else if (req.url === '/large') {
       res.setHeader('Content-Type', 'text/plain');
       res.end('x'.repeat(4_100_000));
@@ -93,7 +109,14 @@ let fixtureTab;
 try {
   await call('Runtime.enable');
   await call('Page.enable');
-  await until('typeof state !== "undefined" && document.readyState === "complete" && state.repeaters.length');
+  await until('document.readyState === "complete" && typeof Disclosure !== "undefined"');
+  if (!await evaluate('Disclosure.accepted()')) {
+    await until('document.querySelector(".disclosure-dialog[open]")');
+    assert.equal(await evaluate('state.repeaters.length'), 0, 'no workspace is initialized before disclosure');
+    assert.equal(await evaluate('LocalStore.read().then(saved=>!saved)'), true, 'no new workspace is persisted before disclosure');
+    await evaluate('document.querySelector(".disclosure-actions .primary").click()');
+  }
+  await until('typeof state !== "undefined" && state.repeaters.length && labState.ready');
   const platform = await evaluate('chrome.runtime.getPlatformInfo().then(info=>info.os)');
   const initialShortcut = await evaluate('(async()=>{await shortcutHintsReady;return document.querySelector("[data-shortcut]").textContent})()');
   assert.equal(initialShortcut, platform === 'mac' ? '⌘ + Enter' : 'Ctrl + Enter');
@@ -365,7 +388,7 @@ try {
   assert.deepEqual(exceptions, []);
 
   if (process.argv.includes('--screenshots')) {
-    await fs.mkdir('local/screenshots-1.1.0', { recursive: true });
+    await fs.mkdir('local/screenshots-1.1.1', { recursive: true });
     await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
     await evaluate(`(()=>{
@@ -390,21 +413,21 @@ try {
       })()`);
       await delay(150);
       const shot = await call('Page.captureScreenshot', { format: 'png' });
-      await fs.writeFile(`local/screenshots-1.1.0/${view}.png`, Buffer.from(shot.data, 'base64'));
+      await fs.writeFile(`local/screenshots-1.1.1/${view}.png`, Buffer.from(shot.data, 'base64'));
       if (view === 'intercept') await evaluate('(async()=>{await releaseAll(false);state.interceptOn=false;await detach()})()');
     }
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
     await evaluate("switchView('comparer')");
     await delay(150);
     let shot = await call('Page.captureScreenshot', { format: 'png' });
-    await fs.writeFile('local/screenshots-1.1.0/comparer-light.png', Buffer.from(shot.data, 'base64'));
+    await fs.writeFile('local/screenshots-1.1.1/comparer-light.png', Buffer.from(shot.data, 'base64'));
     await call('Emulation.setDeviceMetricsOverride', { width: 760, height: 960, deviceScaleFactor: 1, mobile: false });
     await evaluate("switchView('decoder')");
     await delay(150);
     const overflow = await evaluate('document.documentElement.scrollWidth > innerWidth');
     assert.equal(overflow, false, 'narrow workbench fits the viewport');
     shot = await call('Page.captureScreenshot', { format: 'png' });
-    await fs.writeFile('local/screenshots-1.1.0/decoder-narrow.png', Buffer.from(shot.data, 'base64'));
+    await fs.writeFile('local/screenshots-1.1.1/decoder-narrow.png', Buffer.from(shot.data, 'base64'));
     for (const view of ['intercept', 'history', 'repeater', 'comparer', 'runner', 'collections', 'inspector', 'sitemap', 'builder', 'security', 'websocket', 'workspace']) {
       await evaluate(`switchView('${view}')`);await delay(100);
       assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, `${view} fits narrow viewport`);
@@ -420,16 +443,16 @@ try {
     }
   }
   if (process.argv.includes('--store-screenshots')) {
-    const directory = 'local/release-1.1.0/store/screenshots';
+    const directory = 'local/release-1.1.1/store/screenshots';
     await fs.mkdir(directory, { recursive: true });
     await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
-    await evaluate(`addEnvironment('Local demo',${JSON.stringify('baseUrl=' + fixture + '\ntoken=demo-local-token')});$('#builderAssertions').closest('details').open=true;$('#runnerAssertions').value='[{"type":"status","equals":200},{"type":"header","name":"Content-Type","contains":"application/json"}]';$('#runnerMeta').textContent='Finished · 3 requests · 0 errors';`);
-    await evaluate(`$('#inspectResponse').value='';$('#decoderInput').value='{"id":9007199254740993,"active":true}';$('#decoderAction').value='json-pretty';runDecoder();
-      $('#builderMethod').value='POST';$('#builderUrl').value='{{baseUrl}}/api/validate';$('#builderAuth').value='bearer';$('#builderAuthName').value='';$('#builderAuthValue').value='{{token}}';$('#builderAuth').dispatchEvent(new Event('change'));$('#builderHeaders').value='Accept: application/json';$('#builderBodyMode').value='json';$('#builderBody').value='{"amount":99,"currency":"USD"}';$('#builderAssertions').value='[{"type":"status","equals":200},{"type":"header","name":"Content-Type","contains":"application/json"}]';
-      $('#runnerRequest').value=${JSON.stringify(template)};$('#runnerPayloads').value=${JSON.stringify('0\n1\n-1')};workflowState.runner.results=${JSON.stringify(runResults)};workflowState.runner.selectedId=3;workflowState.runner.planned=3;renderRunner();
-      $('#securityFilter').value='all';renderSecurity();`);
+    await evaluate(`addEnvironment('Local demo',${JSON.stringify('baseUrl=' + fixture + '\ntoken=demo-local-token')});$('#builderAssertions').closest('details').open=true;`);
+    await evaluate(`$('#builderMethod').value='POST';$('#builderUrl').value='{{baseUrl}}/api/validate';$('#builderAuth').value='bearer';$('#builderAuthName').value='';$('#builderAuthValue').value='{{token}}';$('#builderAuth').dispatchEvent(new Event('change'));$('#builderHeaders').value='Accept: application/json';$('#builderBodyMode').value='json';$('#builderBody').value='{\"amount\":99,\"currency\":\"USD\"}';$('#builderAssertions').value='[{\"type\":\"status\",\"equals\":200},{\"type\":\"json\",\"path\":\"/accepted\",\"equals\":true}]';`);
     await evaluate('sendBuilder()');
+    const demoRaw=`GET /demo/validate?amount={{payload}} HTTP/1.1\nHost: 127.0.0.1:${server.address().port}\n\n`;
+    await evaluate(`(async()=>{sendToRunner(${JSON.stringify(demoRaw)},${JSON.stringify(fixture)});$('#runnerPayloads').value='0\\n1\\n-1';$('#runnerMatch').value='';$('#runnerAssertions').value='[{\"type\":\"status\",\"equals\":200}]';$('#runnerAssertions').closest('details').open=false;await startRunner();workflowState.runner.selectedId=workflowState.runner.results.at(-1).id;renderRunner()})()`);
+    await evaluate(`(async()=>{const r=newRepeater({raw:'GET /demo/security HTTP/1.1\\nHost: 127.0.0.1:${server.address().port}\\n\\n',target:${JSON.stringify(fixture)}});await sendRepeater(r);const e=state.history.at(-1);labState.findings=Lab.passiveReview([e]).filter(f=>['cookie-http','cookie-same','nosniff'].includes(f.code)).slice(0,3);if(labState.findings[0])labState.findings[0].status='reviewed';$('#securityFilter').value='all';renderSecurity();await Layout.restore({version:1,splits:{intercept:{x:25},builder:{x:47},'runner-plan':{x:44}}})})()`);
     for (const [index, view] of ['intercept', 'builder', 'runner', 'security', 'workspace'].entries()) {
       if (view === 'intercept') {
         await evaluate(`(async()=>{$('#tabSelect').value='${fixtureTab}';await attach();state.interceptOn=true;updateStatus();await applyFetch();await cdp('Runtime.evaluate',{expression:${JSON.stringify(`fetch('${fixture}/checkout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"orderId":"demo-1042","amount":99,"currency":"USD"}'})`)}})})()`);

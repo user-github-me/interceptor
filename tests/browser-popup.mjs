@@ -71,7 +71,13 @@ let originalStorage;
 const fixtureClients = [];
 try {
   await call('Runtime.enable'); await call('Page.enable');
-  await until('document.readyState === "complete" && typeof settings !== "undefined" && document.querySelectorAll("#rules .rule").length');
+  await until('document.readyState === "complete" && typeof Disclosure !== "undefined"');
+  if (!await evaluate('Disclosure.accepted()')) {
+    await until('document.querySelector(".disclosure-dialog[open]")');
+    assert.equal(await evaluate('document.querySelectorAll("#rules .rule").length'), 0, 'popup data inputs wait for disclosure');
+    await evaluate('document.querySelector(".disclosure-actions .primary").click()');
+  }
+  await until('typeof settings !== "undefined" && document.querySelectorAll("#rules .rule").length');
   originalStorage = await evaluate('(async()=>({local:await chrome.storage.local.get("settings"),session:await chrome.storage.session.get("autoTabId")}))()');
   fixtureTabs = await evaluate(`(async()=>{
     const a=await chrome.tabs.create({url:${JSON.stringify(fixture + '/?fixture=one')},active:false});
@@ -170,7 +176,7 @@ try {
   if (process.argv.includes('--screenshots') || process.argv.includes('--screenshot')) {
     await evaluate(`(()=>{activeTab={id:${fixtureTabs[0]},host:${JSON.stringify(new URL(fixture).host)},ok:true};renderScope()})()`);
     await call('Emulation.setDeviceMetricsOverride', { width: 380, height: 590, deviceScaleFactor: 1, mobile: false });
-    await fs.mkdir('local/screenshots-1.1.0', { recursive: true });
+    await fs.mkdir('local/screenshots-1.1.1', { recursive: true });
     for (const theme of ['dark', 'light']) {
       await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
       await evaluate('window.scrollTo(0,0)');
@@ -178,7 +184,7 @@ try {
       assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false, 'popup has no horizontal overflow');
       assert.equal(await evaluate('(()=>{const box=document.querySelector("#openPanel").getBoundingClientRect();return box.top>=0 && box.bottom<=innerHeight})()'), true, 'Open workbench stays visible');
       const shot = await call('Page.captureScreenshot', { format: 'png' });
-      await fs.writeFile(`local/screenshots-1.1.0/popup${theme === 'light' ? '-light' : ''}.png`, Buffer.from(shot.data, 'base64'));
+      await fs.writeFile(`local/screenshots-1.1.1/popup${theme === 'light' ? '-light' : ''}.png`, Buffer.from(shot.data, 'base64'));
     }
   }
   assert.deepEqual(client.exceptions, []);

@@ -1,0 +1,28 @@
+.disclosure-dialog {
+  width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  box-sizing: border-box; overflow: auto; padding: 28px; border: 1px solid #394352;
+  border-radius: 16px; background: #171d27; color: #edf1f8;
+  box-shadow: 0 24px 100px #0009; font: 14px/1.65 system-ui, sans-serif;
+}
+.disclosure-dialog::backdrop { background: #080c14b8; backdrop-filter: blur(4px); }
+.disclosure-dialog h1 { font-size: 24px; line-height: 1.25; margin: 0 0 18px; }
+.disclosure-dialog h2 { font-size: 18px; margin: 22px 0 8px; }
+.disclosure-dialog p { margin: 12px 0; }
+.disclosure-dialog a { color: #ff9d58; display: inline-block; margin-right: 16px; }
+.disclosure-dialog li { margin: 10px 0; }
+.disclosure-dialog .hint { color: #aeb9c9; font-size: 12px; }
+.disclosure-dialog button { min-height: 40px; padding: 9px 14px; cursor: pointer; font: inherit; }
+.disclosure-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+.disclosure-error { color: #ff9c9c; }
+.disclosure-dialog :focus-visible { outline: 2px solid #ff9d58; outline-offset: 3px; }
+@media (prefers-color-scheme: light) {
+  .disclosure-dialog { background: #fff; color: #1a2330; border-color: #c7d0dd; }
+  .disclosure-dialog a { color: #a34400; }
+  .disclosure-dialog .hint { color: #586779; }
+  .disclosure-error { color: #b52d34; }
+}
+@media (max-width: 480px) {
+  .disclosure-dialog { padding: 18px; font-size: 13px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
+  .disclosure-dialog h1 { font-size: 20px; }
+  .disclosure-actions { flex-direction: column; }
+}

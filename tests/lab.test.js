@@ -145,3 +145,19 @@ test('encrypted full backups authenticate data and reject wrong passwords or tam
   await assert.rejects(Lab.decryptBackup({ ...encrypted, data: encrypted.data.slice(0, -4) + 'AAAA' }, 'local-test-password'), /damaged/);
   await assert.rejects(Lab.encryptBackup(data, 'short'), /8 characters/);
 });
+
+test('passive local-file history survives validated snapshots while unsupported schemes remain blocked', () => {
+  const data = backup();
+  data.workspace.history.push({ id: 1, method: 'GET', url: 'file:///tmp/interceptor-fixture.html', wallTime: 1, reqHeaders: [], resHeaders: [], reqBody: '', resBody: '<h1>Local fixture</h1>' });
+  const restored = Lab.validateBackup(data);
+  assert.deepEqual(restored.history[0], data.workspace.history[0]);
+  restored.history[0].resBody = 'edited';
+  assert.equal(data.workspace.history[0].resBody, '<h1>Local fixture</h1>', 'default validation returns an independent snapshot');
+  assert.equal(Lab.validateBackup(data, { clone: false }), data.workspace);
+  for (const url of ['https://example.test/', 'http://localhost/', 'file:///tmp/test%20document.html']) assert.equal(Lab.historyUrlAllowed(url), true);
+  for (const url of ['javascript:alert(1)', 'data:text/html,test', 'blob:https://example.test/1', 'chrome://settings/', 'ftp://example.test/', 'https://example.test/\u0000', 'not a URL']) {
+    assert.equal(Lab.historyUrlAllowed(url), false);
+    data.workspace.history[0].url = url;
+    assert.throws(() => Lab.validateBackup(data), /history URL/);
+  }
+});
